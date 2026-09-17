@@ -169,6 +169,12 @@ def procesar_archivo_inbox(usuario: str, path: Path) -> dict[str, Any]:
         processed = inbox_dir(usuario) / "processed" / f"{int(time.time())}_{source_name}"
         shutil.move(str(path), str(processed))
         print(f"[INBOX] {usuario}: {source_name} -> {dest.name}")
+        try:
+            from jarvis.fatigue_notifier import maybe_notify_after_inbox
+
+            maybe_notify_after_inbox(usuario, str(dest))
+        except Exception as notify_exc:  # noqa: BLE001
+            print(f"[NOTIFIER] skip: {notify_exc}")
         return {
             "status": "success",
             "user": usuario,
