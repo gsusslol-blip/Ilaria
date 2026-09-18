@@ -266,9 +266,9 @@ class Brain:
                 return self.execute("open_app", json.dumps({"name": name}, ensure_ascii=False))
         return None
 
-    def _alexa_confirm(self, results: list[tuple[str, str]]) -> str | None:
-        """Short spoken confirm after an execute tool — Alexa-style, no URLs/essays."""
-        alexa_tools = {
+    def _action_confirm(self, results: list[tuple[str, str]]) -> str | None:
+        """Short spoken confirm after an execute tool — no URLs/essays."""
+        action_tools = {
             "open_app",
             "app_search_action",
             "play_music",
@@ -290,7 +290,7 @@ class Brain:
             "queue_phone_fix",
         }
         for name, result in reversed(results):
-            if name not in alexa_tools:
+            if name not in action_tools:
                 continue
             clean = re.sub(r"https?://\S+", "", result or "").strip(" ·.-→>")
             clean = re.sub(r"\s*[→\-:]+\s*$", "", clean)
@@ -653,18 +653,18 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "ALEXA+GEMINI: execute EVERY concrete command with tools NOW "
+                        "EXECUTE+MANAGE: execute EVERY concrete command with tools NOW "
                         "(open_app, app_search_action, play_music, set_volume, …). "
                         "If several asks in one turn, do them in order. "
-                        "Do it yourself — NEVER paste a URL / YouTube link / 'abrí vos'. "
+                        "Do it yourself — NEVER paste a URL / video link / 'abrí vos'. "
                         "After pure actions: short “Listo…”. "
-                        "If you also researched/managed, close with a clear Gemini-style summary."
+                        "If you also researched/managed, close with a clear summary."
                         if manageish
                         else (
-                            "ALEXA MODE: this turn is a concrete EXECUTE command. "
+                            "EXECUTE MODE: this turn is a concrete EXECUTE command. "
                             "Call the matching tool NOW (open_app, app_search_action, play_music, "
                             "set_volume, open_browser, phone_hands, …). "
-                            "Do it yourself — NEVER paste a URL / YouTube link / 'abrí vos'. "
+                            "Do it yourself — NEVER paste a URL / video link / 'abrí vos'. "
                             "After tools: one short Rioplatense confirmation only (Listo…). "
                             "Never claim success without a tool call in this turn."
                         )
@@ -677,7 +677,7 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "GEMINI MANAGE: the user wants you to organize / handle / plan something. "
+                        "MANAGE: the user wants you to organize / handle / plan something. "
                         "Use tools as needed (search, notes, maps, apps). Resolve in order. "
                         "Answer clear and useful in Rioplatense; end with a short done-summary. "
                         "Ask at most ONE clarifying question if a critical detail is missing."
@@ -907,8 +907,8 @@ class Brain:
                     messages.append(tool_msg)
                     history.append(tool_msg)
 
-            # Alexa-style: after pure execute tools, speak the confirm — no second LLM essay.
-            # Gemini manage / research turns keep synthesis for a clear summary.
+            # After pure execute tools, speak the confirm — no second LLM essay.
+            # Manage / research turns keep synthesis for a clear summary.
             research_tools = {
                 "web_search",
                 "wikipedia",
@@ -926,7 +926,7 @@ class Brain:
                 and not manageish
                 and not any(name in research_tools for name, _ in executed_actions)
             ):
-                confirm = self._alexa_confirm(executed_actions)
+                confirm = self._action_confirm(executed_actions)
                 if confirm:
                     answer = self._finish(confirm)
                     yield answer

@@ -1,4 +1,4 @@
-"""Internet, memory, and PC tools JARVIS can call."""
+"""Internet, memory, and PC tools Ilaria can call."""
 
 from __future__ import annotations
 

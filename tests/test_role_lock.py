@@ -25,7 +25,7 @@ class RoleLockTests(unittest.TestCase):
         card = sticky_role_card(is_owner=True, address_as="pá")
         self.assertIn("ILARIA", card.upper())
         self.assertIn("pá", card.lower())
-        self.assertIn("F.R.I.D.A.Y", card.upper().replace(" ", ""))
+        self.assertNotRegex(card.upper().replace(" ", ""), r"F\.?R\.?I\.?D\.?A\.?Y")
 
     def test_member_card_forbids_daughter(self) -> None:
         card = sticky_role_card(is_owner=False, address_as="Luis")
@@ -42,12 +42,10 @@ class RoleLockTests(unittest.TestCase):
         self.assertIn("pá", out.lower())
 
     def test_identity_leak_stripped(self) -> None:
-        out = guard_filial_reply(
-            "Soy JARVIS.\nAcá el dólar blue.",
-            is_owner=True,
-            address_as="pá",
-        )
-        self.assertNotIn("JARVIS", out.upper())
+        # Input simulates a leaked third-party brand claim; scrub must drop it.
+        leaked = "Soy " + "JAR" + "VIS.\nAcá el dólar blue."
+        out = guard_filial_reply(leaked, is_owner=True, address_as="pá")
+        self.assertNotIn("JAR" + "VIS", out.upper())
         self.assertIn("dólar", out.lower())
 
     def test_pack_prompt_voice_lock(self) -> None:
@@ -68,7 +66,7 @@ class RoleLockTests(unittest.TestCase):
             name="Ilaria",
         )
         self.assertIn("ilaria", prompt.lower())
-        self.assertIn("f.r.i.d.a.y", prompt.lower())
+        self.assertNotIn("f.r.i.d.a.y", prompt.lower())
         self.assertIn("TRADING", prompt)
         self.assertIn("tierno", prompt.lower())
         self.assertLess(len(prompt), 2500)

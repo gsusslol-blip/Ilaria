@@ -1,4 +1,4 @@
-"""Real PC-side actions JARVIS can execute."""
+"""Real PC-side actions Ilaria can execute."""
 
 from __future__ import annotations
 
@@ -276,7 +276,7 @@ class Actions:
             if plat in {"images", "image", "imagenes", "imágenes", "ilustracion", "ilustración", "fotos", "google_images", "bing_images"}
             else ("YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title())
         )
-        # Alexa-style: confirm action, never speak the raw URL.
+        # Confirm action for speech; never speak the raw URL.
         if "URL inválida" in launched or "no encontré" in launched.lower():
             return launched
         return f"Listo, abrí {label} con {q}."
