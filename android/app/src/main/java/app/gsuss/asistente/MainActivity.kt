@@ -396,11 +396,17 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
     WakeListen(
         enabled = true,
         busy = busy,
-        onRms = { level -> if (!busy) voice = level },
-    ) { raw ->
-        val gated = gateWake(raw, followMs = 22_000L, lastTalk = lastTalk)
-        if (gated.isNotBlank()) speakHeard(gated)
-    }
+        onRms = { level -> voice = level },
+        onBargeIn = {
+            SoloTts.stop()
+            brain.stopAudio()
+        },
+        onHeard = { raw ->
+            if (busy) return@WakeListen
+            val gated = gateWake(raw, followMs = 22_000L, lastTalk = lastTalk)
+            if (gated.isNotBlank()) speakHeard(gated)
+        },
+    )
     LaunchedEffect(Unit) {
         while (true) {
             val ok = withContext(Dispatchers.IO) {

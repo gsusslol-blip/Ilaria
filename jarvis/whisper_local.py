@@ -14,6 +14,14 @@ _model = None
 _device = ""
 
 
+def reset_model() -> None:
+    """Drop cached Whisper so the next STT loads the preferred size."""
+    global _model, _device
+    with _lock:
+        _model = None
+        _device = ""
+
+
 def whisper_available() -> bool:
     try:
         import faster_whisper  # noqa: F401
@@ -51,7 +59,22 @@ def _load(settings: Settings):
         if _device == "gpu":
             _device = "cuda"
         name = (getattr(settings, "faster_whisper_model", None) or "base").strip() or "base"
-        compute = "float16" if _device == "cuda" else "int8"
+        try:
+            from jarvis.voice_prefs import load_voice_prefs
+
+            pref = str(load_voice_prefs().get("faster_whisper_model") or "").strip()
+            if pref:
+                name = pref
+        except Exception:
+            pass
+        env_model = (os.getenv("FASTER_WHISPER_MODEL") or "").strip()
+        if env_model:
+            name = env_model
+        forced_compute = (os.getenv("WHISPER_COMPUTE_TYPE") or "").strip().lower()
+        if forced_compute:
+            compute = forced_compute
+        else:
+            compute = "float16" if _device == "cuda" else "int8"
         print(f"[+] Faster-Whisper local: model={name} device={_device} compute={compute}")
         _model = WhisperModel(name, device=_device, compute_type=compute)
         return _model
@@ -61,22 +84,48 @@ def transcribe_local(settings: Settings, data: bytes, filename: str) -> str:
     suffix = Path(filename).suffix.lower() or ".wav"
     if suffix not in {".webm", ".wav", ".mp3", ".ogg", ".mp4", ".m4a", ".flac"}:
         suffix = ".wav"
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix="stt-", suffix=suffix, dir=DATA_DIR, delete=False) as tmp:
+    # System temp — avoid OneDrive sync lag under data/.
+    with tempfile.NamedTemporaryFile(prefix="stt-", suffix=suffix, delete=False) as tmp:
         tmp.write(data)
         path = tmp.name
     try:
         model = _load(settings)
-        # language=None → Whisper auto-detects (es, en, pt, fr, …).
         forced = (os.getenv("STT_LANGUAGE") or "").strip().lower() or None
+        try:
+            from jarvis.voice_prefs import load_voice_prefs
+
+            pref_lang = str(load_voice_prefs().get("stt_language") or "").strip().lower()
+            if pref_lang:
+                forced = pref_lang
+        except Exception:
+            pass
         if forced in {"auto", "detect", "*"}:
             forced = None
+        elif not forced:
+            forced = "es"
+        prompts = {
+            "es": "Ilaria, español rioplatense, comandos cortos.",
+            "en": "Ilaria assistant, short English voice commands.",
+            "it": "Ilaria, assistente vocale, comandi brevi in italiano.",
+            "pt": "Ilaria, comandos de voz curtos em português.",
+            "fr": "Ilaria, commandes vocales courtes en français.",
+            "de": "Ilaria, kurze Sprachbefehle auf Deutsch.",
+        }
+        initial = prompts.get(forced or "", prompts["es"])
         segments, info = model.transcribe(
             path,
             beam_size=1,
             language=forced,
             vad_filter=True,
+            vad_parameters={
+                "threshold": 0.5,
+                "min_silence_duration_ms": 400,
+                "speech_pad_ms": 200,
+            },
             condition_on_previous_text=False,
+            without_timestamps=True,
+            temperature=0.0,
+            initial_prompt=initial,
         )
         text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
         lang = getattr(info, "language", None) or forced or "es"

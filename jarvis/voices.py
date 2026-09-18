@@ -20,6 +20,8 @@ class VoiceProfile:
     piper_file: str = ""
     edge_voice: str = ""
     lang: str = "es"
+    edge_rate: str = "+0%"
+    edge_pitch: str = "+0Hz"
 
 
 # Friendly catalog — IDs stored per user in accounts.sqlite.
@@ -74,6 +76,32 @@ _VOICE_DEFS: tuple[VoiceProfile, ...] = (
         edge_voice="en-US-JennyNeural",
         lang="en",
     ),
+    VoiceProfile(
+        id="elsa",
+        label="Elsa (IT)",
+        style="Italiano femminile (Edge Neural)",
+        provider="edge",
+        edge_voice="it-IT-ElsaNeural",
+        lang="it",
+    ),
+    VoiceProfile(
+        id="diego",
+        label="Diego (IT)",
+        style="Italiano maschile (Edge Neural)",
+        provider="edge",
+        edge_voice="it-IT-DiegoNeural",
+        lang="it",
+    ),
+    VoiceProfile(
+        id="yui",
+        label="Yui",
+        style="Compañera suave (Edge + pitch) — vibe partner AI, no cosplay de marca",
+        provider="edge",
+        edge_voice="es-MX-DaliaNeural",
+        lang="es",
+        edge_rate="+4%",
+        edge_pitch="+28Hz",
+    ),
 )
 
 
@@ -126,6 +154,12 @@ def get_voice(voice_id: str | None) -> VoiceProfile:
         "alloy": "mateo",
         "echo": "carlos",
         "ald": "sofia",
+        "italiano": "elsa",
+        "italian": "elsa",
+        "it": "elsa",
+        "yui": "yui",
+        "sao": "yui",
+        "partner": "yui",
     }
     key = aliases.get(key, key)
     for voice in _VOICE_DEFS:
@@ -147,6 +181,8 @@ def resolve_runtime(voice_id: str | None) -> dict[str, str]:
             "provider": "piper",
             "tts_voice": voice.edge_voice or "es-AR-ElenaNeural",
             "piper_model": voice.piper_file,
+            "edge_rate": voice.edge_rate or "+0%",
+            "edge_pitch": voice.edge_pitch or "+0Hz",
         }
     # Edge path (chosen or Piper missing).
     return {
@@ -154,11 +190,17 @@ def resolve_runtime(voice_id: str | None) -> dict[str, str]:
         "provider": "edge",
         "tts_voice": voice.edge_voice or "es-AR-ElenaNeural",
         "piper_model": "",
+        "edge_rate": voice.edge_rate or "+0%",
+        "edge_pitch": voice.edge_pitch or "+0Hz",
     }
 
 
 def preview_line(voice_id: str | None) -> str:
     voice = get_voice(voice_id)
+    if voice.id == "yui":
+        return "Hola… estoy acá con vos. ¿En qué te ayudo?"
     if voice.lang == "en":
         return f"Hi, I'm Ilaria with the {voice.label} voice."
+    if voice.lang == "it":
+        return f"Ciao, sono Ilaria con la voce {voice.label}."
     return f"Hola, soy Ilaria con la voz {voice.label}."

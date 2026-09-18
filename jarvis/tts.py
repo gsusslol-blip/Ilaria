@@ -77,7 +77,10 @@ def _cache_key(clean: str, settings: Settings) -> str:
     provider = _provider(settings)
     voice = (settings.tts_voice or "").strip() or DEFAULT_VOICE
     piper = (getattr(settings, "piper_model_name", None) or "").strip()
-    raw = f"{provider}|{voice}|{piper}|{clean}".encode("utf-8")
+    rate = (getattr(settings, "tts_rate", None) or "+0%").strip()
+    pitch = (getattr(settings, "tts_pitch", None) or "+0Hz").strip()
+    vid = (getattr(settings, "voice_id", None) or "").strip()
+    raw = f"{provider}|{voice}|{piper}|{vid}|{rate}|{pitch}|{clean}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:28]
 
 
@@ -157,13 +160,25 @@ def _provider(settings: Settings) -> str:
 
 def first_speakable_sentence(text: str) -> str | None:
     """Return first speakable chunk when enough text arrived for early TTS."""
-    clean = " ".join((text or "").split())
+    clean = " ".join((text or "").strip().split())
+    if not clean:
+        return None
+    # Instant-execute confirms: speak as soon as the short reply is complete.
+    if re.fullmatch(
+        r"(?:Listo|Hecho|Dale|Ya|Okey|OK|Perfecto|Claro|Silenciado|Deshecho|"
+        r"Siguiente|Anterior|Pausa|Abierto|Abriendo(?:\s+\w+)?|"
+        r"Volumen(?:\s+al\s+[\w%]+|\s+ajustado)?|"
+        r"Timer\s+listo|Captura\s+lista|Anotado)[.!]?",
+        clean,
+        re.I,
+    ):
+        return clean if len(clean) >= 2 else None
     if len(clean) < 8:
         return None
     match = re.search(r"^(.+?[.!?…])(?:\s|$)", clean)
     if match:
         first = match.group(1).strip()
-        if len(first) >= 12:
+        if len(first) >= 8:
             return first
         rest = clean[len(first) :].lstrip()
         if rest:
@@ -263,6 +278,8 @@ async def _edge_mp3(settings: Settings, clean: str, stamp: str) -> Path:
 
     path = DATA_DIR / (Path(stamp).stem + ".mp3")
     voice = (settings.tts_voice or "").strip() or DEFAULT_VOICE
-    communicate = edge_tts.Communicate(clean, voice)
+    rate = (getattr(settings, "tts_rate", None) or "+0%").strip() or "+0%"
+    pitch = (getattr(settings, "tts_pitch", None) or "+0Hz").strip() or "+0Hz"
+    communicate = edge_tts.Communicate(clean, voice, rate=rate, pitch=pitch)
     await communicate.save(str(path))
     return path

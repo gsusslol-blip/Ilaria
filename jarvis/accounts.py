@@ -21,7 +21,7 @@ ITERATIONS = 180_000
 # Long-lived sessions for desktop WebView + Android LAN clients (10 years).
 SESSION_MAX_AGE_SECONDS = 315_360_000
 SESSION_DAYS = SESSION_MAX_AGE_SECONDS // 86400
-ALLOWED_TONES = frozenset({"equilibrado", "serio", "seco", "calido", "ejecutivo", "tierno"})
+ALLOWED_TONES = frozenset({"equilibrado", "serio", "seco", "calido", "ejecutivo", "tierno", "yui"})
 
 
 @dataclass(frozen=True)
@@ -536,6 +536,11 @@ def normalize_tone(raw: str | None) -> str:
         "nina": "tierno",
         "niña": "tierno",
         "sweet": "tierno",
+        "yui": "yui",
+        "sao": "yui",
+        "companera": "yui",
+        "compañera": "yui",
+        "partner": "yui",
     }
     key = aliases.get(key, key)
     return key if key in ALLOWED_TONES else "equilibrado"

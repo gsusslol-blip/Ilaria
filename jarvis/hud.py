@@ -14,13 +14,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from jarvis import __version__
 from jarvis.accounts import SESSION_MAX_AGE_SECONDS, User
 from jarvis.android_ota import advertised as android_update, apk_path
-from jarvis.config import STATIC_DIR
+from jarvis.config import DATA_DIR, STATIC_DIR
 from jarvis.lan import phone_base_urls
 from jarvis.packs import PACKS, normalize_pack_ids, public_packs, routine_slot, welcome_script
 from jarvis.piper_tts import piper_available
@@ -120,6 +121,17 @@ class ProfileIn(BaseModel):
 
 class VoicePreviewIn(BaseModel):
     voice_id: str = "ilaria"
+
+
+class WakeHudIn(BaseModel):
+    active: bool = False
+
+
+class VoicePrefsIn(BaseModel):
+    wake_sensitivity: float | None = None
+    wake_mic_index: int | None = None
+    faster_whisper_model: str | None = None
+    stt_language: str | None = None
 
 
 class AdminUserIn(BaseModel):
@@ -259,6 +271,11 @@ def create_hud(state: AppState) -> FastAPI:
             "version": __version__,
             "tts": "piper" if piper_available() else "edge",
         }
+
+    @app.get("/version.json")
+    async def version_json_root() -> JSONResponse:
+        """Local OTA/channel manifest — avoids GitHub 404 when no release is published."""
+        return JSONResponse(_local_version_payload())
 
     @app.get("/api/stack-health")
     async def stack_health(request: Request) -> dict[str, Any]:
@@ -564,6 +581,8 @@ def create_hud(state: AppState) -> FastAPI:
             tts_voice=runtime["tts_voice"],
             piper_model_name=runtime.get("piper_model") or "",
             voice_id=voice_id,
+            tts_rate=runtime.get("edge_rate") or "+0%",
+            tts_pitch=runtime.get("edge_pitch") or "+0Hz",
         )
         line = preview_line(voice_id)
         try:
@@ -808,11 +827,40 @@ def create_hud(state: AppState) -> FastAPI:
             early_sentence = ""
             early_audio_url = None
             early_sent = False
+            early_task: asyncio.Task | None = None
+
+            async def _render_early(sentence: str) -> str | None:
+                if not gate.allow(f"tts:{user.id}", 20, 60):
+                    return None
+                try:
+                    path = await speak_to_file(
+                        state.settings_for(user),
+                        sentence,
+                        f"tts-{user.id}-early-{time.time_ns()}.mp3",
+                    )
+                    return audio_api_path(path.name)
+                except Exception:  # noqa: BLE001
+                    return None
+
             while True:
                 kind, value = await queue.get()
                 if kind == "token" and value:
                     parts.append(value)
                     yield f"event: token\ndata: {json.dumps({'text': value}, ensure_ascii=False)}\n\n"
+                    if (
+                        early_task is not None
+                        and early_audio_url is None
+                        and early_task.done()
+                    ):
+                        try:
+                            early_audio_url = early_task.result()
+                        except Exception:  # noqa: BLE001
+                            early_audio_url = None
+                        if early_audio_url:
+                            yield (
+                                "event: early_audio\n"
+                                f"data: {json.dumps({'audio_url': early_audio_url, 'text': early_sentence}, ensure_ascii=False)}\n\n"
+                            )
                     if payload.speak and not early_sent:
                         from jarvis.personality import scrub_public_reply
                         from jarvis.tts import first_speakable_sentence
@@ -821,20 +869,8 @@ def create_hud(state: AppState) -> FastAPI:
                         if sentence:
                             early_sent = True
                             early_sentence = sentence
-                            if gate.allow(f"tts:{user.id}", 20, 60):
-                                try:
-                                    path = await speak_to_file(
-                                        state.settings_for(user),
-                                        sentence,
-                                        f"tts-{user.id}-early-{time.time_ns()}.mp3",
-                                    )
-                                    early_audio_url = audio_api_path(path.name)
-                                    yield (
-                                        "event: early_audio\n"
-                                        f"data: {json.dumps({'audio_url': early_audio_url, 'text': sentence}, ensure_ascii=False)}\n\n"
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    early_audio_url = None
+                            # Do not block token stream on Piper — render in parallel.
+                            early_task = asyncio.create_task(_render_early(sentence))
                 elif kind == "error":
                     from jarvis.personality import scrub_public_reply
 
@@ -843,22 +879,38 @@ def create_hud(state: AppState) -> FastAPI:
                     return
                 elif kind == "end":
                     break
+
+            if early_task is not None:
+                try:
+                    early_audio_url = await early_task
+                except Exception:  # noqa: BLE001
+                    early_audio_url = None
+                if early_audio_url:
+                    yield (
+                        "event: early_audio\n"
+                        f"data: {json.dumps({'audio_url': early_audio_url, 'text': early_sentence}, ensure_ascii=False)}\n\n"
+                    )
+
             from jarvis.personality import scrub_public_reply
 
             reply = scrub_public_reply(_with_android_hint(brain, brain._last_assistant(session_id)))
             audio_url = None
             skip_full_tts = False
-            # If early TTS already covered a short final reply, skip a second render.
-            if (
-                early_audio_url
-                and early_sentence
-                and reply.strip()
-                and len(reply.strip()) <= max(len(early_sentence) + 36, 96)
-                and reply.strip().startswith(early_sentence[: min(24, len(early_sentence))])
-            ):
-                audio_url = early_audio_url
-                skip_full_tts = True
-            elif payload.speak and reply.strip():
+            # If early TTS already covered the final reply, skip a second Piper pass.
+            reply_s = reply.strip()
+            early_s = early_sentence.strip()
+            if early_audio_url and early_s and reply_s:
+                if (
+                    reply_s == early_s
+                    or reply_s.startswith(early_s)
+                    or (
+                        len(reply_s) <= max(len(early_s) + 48, 120)
+                        and reply_s.startswith(early_s[: min(24, len(early_s))])
+                    )
+                ):
+                    audio_url = early_audio_url
+                    skip_full_tts = True
+            if not skip_full_tts and payload.speak and reply_s:
                 if not gate.allow(f"tts:{user.id}", 20, 60):
                     yield (
                         "event: done\n"
@@ -937,6 +989,35 @@ def create_hud(state: AppState) -> FastAPI:
                 )
             raise HTTPException(status_code=502, detail=f"No pude transcribir: {detail}") from exc
         return {"text": text}
+
+    @app.post("/api/wake/hud-listening")
+    async def wake_hud_listening(payload: WakeHudIn, request: Request) -> dict[str, Any]:
+        """HUD Libre / push-to-talk holds the mic → pause Porcupine."""
+        require_user(request)
+        from jarvis.wake_control import set_hud_listening
+
+        set_hud_listening(bool(payload.active))
+        return {"ok": True, "hud_listening": bool(payload.active)}
+
+    @app.get("/api/voice-prefs")
+    async def voice_prefs_get(request: Request) -> dict[str, Any]:
+        require_owner(request)
+        from jarvis.voice_prefs import load_voice_prefs
+
+        return {"prefs": load_voice_prefs()}
+
+    @app.post("/api/voice-prefs")
+    async def voice_prefs_post(payload: VoicePrefsIn, request: Request) -> dict[str, Any]:
+        require_owner(request)
+        from jarvis.voice_prefs import save_voice_prefs
+        from jarvis import whisper_local
+
+        patch = payload.model_dump(exclude_none=True)
+        prefs = save_voice_prefs(patch)
+        # Force Whisper reload on next STT if model or language changed.
+        if "faster_whisper_model" in patch or "stt_language" in patch:
+            whisper_local.reset_model()
+        return {"ok": True, "prefs": prefs}
 
     @app.post("/api/tts")
     async def tts(payload: SpeakIn, request: Request) -> FileResponse:
@@ -1112,4 +1193,45 @@ def create_hud(state: AppState) -> FastAPI:
         dest.write_bytes(data)
         return {"ok": True, "path": rel, "size": dest.stat().st_size}
 
+    # Public OTA files only — never mount all of data/ (accounts, memories, secrets).
+    public_dir = _ensure_public_ota_dir()
+    app.mount("/static", StaticFiles(directory=str(public_dir)), name="static")
+
     return app
+
+
+def _local_version_payload() -> dict[str, Any]:
+    from jarvis.pc_updater import load_channel_cache
+
+    channel = load_channel_cache() or {}
+    android = android_update()
+    return {
+        "app": "Ilaria",
+        "version": str(channel.get("version") or __version__),
+        "min_required_android_client": str(
+            channel.get("min_required_android_client") or android.get("versionName") or __version__
+        ),
+        "changelog": list(channel.get("changelog") or []),
+        "android": {
+            "versionCode": android.get("versionCode"),
+            "versionName": android.get("versionName"),
+            "ready": android.get("ready"),
+            "apk": android.get("apk"),
+        },
+        "notes": "Local HUD manifest. For PC ZIP updates set ILARIA_UPDATE_URL to a published release.",
+    }
+
+
+def _ensure_public_ota_dir():
+    """Write data/public/version.json for /static/version.json (safe subset of data/)."""
+    public = DATA_DIR / "public"
+    public.mkdir(parents=True, exist_ok=True)
+    path = public / "version.json"
+    try:
+        path.write_text(
+            json.dumps(_local_version_payload(), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return public

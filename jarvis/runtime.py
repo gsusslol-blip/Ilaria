@@ -256,11 +256,23 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"[TUNNEL] skip: {exc}")
     try:
+        from jarvis.voice_prefs import apply_voice_prefs_to_env
+
+        apply_voice_prefs_to_env()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[VOICE] prefs skip: {exc}")
+    try:
         from jarvis.tts_warmer import start_tts_warm
 
-        start_tts_warm(settings, limit=16)
+        start_tts_warm(settings, limit=40)
     except Exception as exc:  # noqa: BLE001
         print(f"[WARM_UP] skip: {exc}")
+    try:
+        from jarvis.ollama_warmer import start_ollama_warm
+
+        start_ollama_warm(settings)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARM_UP] ollama skip: {exc}")
     try:
         from jarvis.health_inbox import start_health_inbox_watcher
 

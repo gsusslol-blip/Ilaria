@@ -281,6 +281,13 @@ def check_and_apply(*, force: bool = False, manifest_url: str | None = None) -> 
     try:
         remote = fetch_manifest(url)
     except Exception as exc:  # noqa: BLE001 — soft-fail on boot
+        msg = str(exc)
+        # Missing GitHub release artifact is normal in local-first — don't scare the console.
+        if "404" in msg or "Not Found" in msg:
+            return UpdateResult(
+                "skipped",
+                "Sin version.json remoto (404). Usá /version.json local o publicá un release.",
+            )
         return UpdateResult("error", f"No pude leer version.json: {exc}")
 
     try:

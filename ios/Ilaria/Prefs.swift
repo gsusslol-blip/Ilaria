@@ -57,6 +57,51 @@ final class Prefs: ObservableObject {
         return value
     }
 
+    static func isWanTunnel(_ raw: String) -> Bool {
+        let h = normalizeBase(raw).lowercased()
+        if h.isEmpty { return false }
+        if h.hasPrefix("https://") { return true }
+        return ["ngrok", "loca.lt", "trycloudflare", "cloudflared", "serveo"].contains { h.contains($0) }
+    }
+
+    var lastLanUrl: String {
+        get { UserDefaults.standard.string(forKey: "lan_base") ?? "" }
+        set { UserDefaults.standard.set(Self.normalizeBase(newValue), forKey: "lan_base") }
+    }
+
+    /// LAN UDP → last LAN / ilaria.local → keep current if alive.
+    func preferLanBase() -> String {
+        if let found = LanFind.find(), Self.probeHealth(found) {
+            let url = Self.normalizeBase(found)
+            baseUrl = url
+            lastLanUrl = url
+            return url
+        }
+        for candidate in [lastLanUrl, "http://ilaria.local:8787"] {
+            let url = Self.normalizeBase(candidate)
+            guard !url.isEmpty, !Self.isWanTunnel(url), Self.probeHealth(url) else { continue }
+            baseUrl = url
+            lastLanUrl = url
+            return url
+        }
+        return Self.normalizeBase(baseUrl)
+    }
+
+    static func probeHealth(_ base: String) -> Bool {
+        let root = normalizeBase(base)
+        guard let url = URL(string: "\(root)/health") else { return false }
+        var ok = false
+        let sem = DispatchSemaphore(value: 0)
+        var req = URLRequest(url: url, timeoutInterval: 3)
+        req.httpMethod = "GET"
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            ok = ((resp as? HTTPURLResponse)?.statusCode ?? 0) < 400
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.5)
+        return ok
+    }
+
     func resolveUrl(_ path: String) -> URL? {
         if path.hasPrefix("http://") || path.hasPrefix("https://") {
             return URL(string: path)

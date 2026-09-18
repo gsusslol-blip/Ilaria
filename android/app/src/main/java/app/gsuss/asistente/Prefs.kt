@@ -55,6 +55,19 @@ class Prefs(context: Context) {
         return last == 1
     }
 
+    /** HTTPS tunnels (ngrok etc.) — prefer LAN whenever UDP finds the PC. */
+    fun isWanTunnel(raw: String): Boolean {
+        val h = normalizeBase(raw).lowercase()
+        if (h.isBlank()) return false
+        if (h.startsWith("https://")) return true
+        return listOf("ngrok", "loca.lt", "trycloudflare", "cloudflared", "serveo").any { it in h }
+    }
+
+    /** Last known LAN HUD URL (kept even when baseUrl is temporarily a WAN tunnel). */
+    var lastLanUrl: String
+        get() = sp.getString("lan_base", "") ?: ""
+        set(value) { sp.edit().putString("lan_base", normalizeBase(value)).apply() }
+
     fun resolveUrl(path: String): String {
         if (path.startsWith("http://") || path.startsWith("https://")) return path
         val base = normalizeBase(baseUrl)

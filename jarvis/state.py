@@ -49,6 +49,8 @@ class AppState:
             tts_voice=runtime["tts_voice"],
             piper_model_name=runtime.get("piper_model") or "",
             voice_id=runtime["id"],
+            tts_rate=runtime.get("edge_rate") or "+0%",
+            tts_pitch=runtime.get("edge_pitch") or "+0Hz",
         )
 
     def drop_brain(self, user_id: int) -> None:

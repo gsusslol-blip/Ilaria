@@ -213,6 +213,15 @@ class Brain:
 
     def _finish(self, text: str) -> str:
         clean = redact_secrets(text or "", extra=secret_values(self.settings))
+        try:
+            from jarvis.search_speak import looks_like_search_dump, speakable_from_search
+
+            if looks_like_search_dump(clean):
+                spoken = speakable_from_search(clean, max_words=40)
+                if spoken:
+                    clean = spoken
+        except Exception:  # noqa: BLE001
+            pass
         return guard_filial_reply(
             clean,
             is_owner=self.is_owner,
@@ -284,10 +293,21 @@ class Brain:
             "control_device",
             "note",
             "daily_journal",
+            "read_daily_journal",
             "undo_last",
             "power_control",
             "timer",
+            "set_timer",
+            "set_reminder",
+            "list_reminders",
             "queue_phone_fix",
+            "now",
+            "weather",
+            "calculate",
+            "remember",
+            "recall",
+            "system_status",
+            "list_capabilities",
         }
         for name, result in reversed(results):
             if name not in action_tools:
@@ -399,6 +419,11 @@ class Brain:
                     json.dumps({"query": text[:180], "max_results": 5}, ensure_ascii=False),
                 )
                 if hit and "error" not in hit.lower()[:40] and not hit.startswith("No results"):
+                    from jarvis.search_speak import speakable_from_search
+
+                    spoken = speakable_from_search(hit, text, max_words=40)
+                    if spoken:
+                        return spoken
                     return (
                         "Busqué esto por vos:\n"
                         f"{hit[:1200]}\n"
@@ -719,7 +744,7 @@ class Brain:
         # Small locals often ignore tools; still try a tool loop so PC actions can fire.
         if small:
             max_tokens = SMALL_MAX_TOKENS
-            temperature = SMALL_TEMPERATURE
+            temperature = 0.0 if factish else SMALL_TEMPERATURE
             tool_rounds = ACTION_TOOL_ROUNDS
         elif actionish:
             max_tokens = ACTION_MAX_TOKENS
@@ -727,7 +752,7 @@ class Brain:
             tool_rounds = MAX_TOOL_ROUNDS if manageish else ACTION_TOOL_ROUNDS
         elif factish:
             max_tokens = ACTION_MAX_TOKENS
-            temperature = REASONING_TEMPERATURE
+            temperature = 0.0  # facts: no creative science
             tool_rounds = MAX_TOOL_ROUNDS if manageish else 2  # search → answer
         elif opinionish:
             # Opinions must not touch tools (avoids Groq tool_use_failed 400).
@@ -899,13 +924,59 @@ class Brain:
 
                 for call, result in _execute_tools_parallel(self.execute, tool_calls):
                     executed_actions.append((call.function.name, result))
+                    content = result[:12000]
+                    if call.function.name in {"web_search", "wikipedia"}:
+                        from jarvis.search_speak import clean_search_results, speakable_from_search
+
+                        spoken = speakable_from_search(result, text, max_words=42)
+                        cleaned = clean_search_results(result, max_chars=900)
+                        if spoken:
+                            content = (
+                                f"Respuesta hablable: {spoken}\n"
+                                f"Contexto limpio:\n{cleaned}"
+                            )[:12000]
+                        elif cleaned:
+                            content = f"Contexto limpio:\n{cleaned}"[:12000]
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": result[:12000],
+                        "content": content,
                     }
                     messages.append(tool_msg)
                     history.append(tool_msg)
+
+                # Stop forcing more tools after the first successful round.
+                choice_mode = "auto"
+
+                research_tools = {
+                    "web_search",
+                    "wikipedia",
+                    "read_page",
+                    "image_search",
+                    "kitchen_recipe",
+                    "wellness_action",
+                    "analyze_workspace",
+                    "get_system_health",
+                    "check_lan_status",
+                }
+                # Pure mechanical / short-answer tools: confirm and exit (no synth LLM).
+                if (
+                    executed_actions
+                    and not manageish
+                    and not any(name in research_tools for name, _ in executed_actions)
+                ):
+                    confirm = self._action_confirm(executed_actions)
+                    if confirm and (actionish or len(confirm) <= 280):
+                        answer = self._finish(confirm)
+                        yield answer
+                        self._store(session_id, answer)
+                        return
+                # Fact/research: one tool round is enough → synthesize.
+                if factish and executed_actions:
+                    from jarvis.search_speak import SEARCH_SPEAK_INSTRUCTION
+
+                    messages.append({"role": "system", "content": SEARCH_SPEAK_INSTRUCTION})
+                    break
 
             # After pure execute tools, speak the confirm — no second LLM essay.
             # Manage / research turns keep synthesis for a clear summary.
@@ -921,8 +992,7 @@ class Brain:
                 "check_lan_status",
             }
             if (
-                actionish
-                and executed_actions
+                executed_actions
                 and not manageish
                 and not any(name in research_tools for name, _ in executed_actions)
             ):

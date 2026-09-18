@@ -20,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
-import java.util.Locale
 
 private val WAKE = Regex(
     """\b(ilaria|hilaria|ilaría|oye\s+ilaria|hey\s+ilaria|ok\s+ilaria)\b""",
@@ -32,6 +31,7 @@ fun WakeListen(
     enabled: Boolean,
     busy: Boolean,
     onRms: (Float) -> Unit = {},
+    onBargeIn: () -> Unit = {},
     onHeard: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -47,8 +47,9 @@ fun WakeListen(
     LaunchedEffect(enabled) {
         if (enabled && !granted) ask.launch(Manifest.permission.RECORD_AUDIO)
     }
-    DisposableEffect(enabled, granted, busy) {
-        if (!enabled || !granted || busy) {
+    // Keep listening while busy so barge-in works; gate onHeard separately.
+    DisposableEffect(enabled, granted) {
+        if (!enabled || !granted) {
             return@DisposableEffect onDispose { }
         }
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
@@ -56,7 +57,10 @@ fun WakeListen(
         }
         val speech = SpeechRecognizer.createSpeechRecognizer(context)
         val main = Handler(Looper.getMainLooper())
+        var firedPartial = false
+        var restartDelayMs = 250L
         fun listen() {
+            firedPartial = false
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-AR")
@@ -68,9 +72,16 @@ fun WakeListen(
             } catch (_: Exception) {
             }
         }
+        fun scheduleListen() {
+            main.postDelayed({ listen() }, restartDelayMs)
+        }
         speech.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                restartDelayMs = 250L
+            }
+            override fun onBeginningOfSpeech() {
+                main.post { onBargeIn() }
+            }
             override fun onRmsChanged(rmsdB: Float) {
                 val level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
                 main.post { onRms(level) }
@@ -78,7 +89,14 @@ fun WakeListen(
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
-                listen()
+                // Backoff on busy/client errors to avoid CPU spin.
+                restartDelayMs = when (error) {
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                    SpeechRecognizer.ERROR_CLIENT,
+                    -> (restartDelayMs * 2).coerceAtMost(2000L)
+                    else -> 350L
+                }
+                scheduleListen()
             }
             override fun onResults(results: Bundle?) {
                 val text = results
@@ -86,15 +104,31 @@ fun WakeListen(
                     ?.firstOrNull()
                     .orEmpty()
                     .trim()
-                val gated = gateWake(text)
-                if (gated.isNotBlank()) onHeard(gated)
-                listen()
+                if (!busy) {
+                    val gated = gateWake(text)
+                    if (gated.isNotBlank()) onHeard(gated)
+                }
+                restartDelayMs = 250L
+                scheduleListen()
             }
-            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (busy || firedPartial) return
+                val text = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+                    .trim()
+                if (WAKE.containsMatchIn(text)) {
+                    firedPartial = true
+                    val gated = gateWake(text)
+                    if (gated.isNotBlank()) onHeard(gated)
+                }
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         listen()
         onDispose {
+            main.removeCallbacksAndMessages(null)
             try {
                 speech.cancel()
                 speech.destroy()

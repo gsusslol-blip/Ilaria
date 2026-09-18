@@ -12,6 +12,7 @@ from jarvis.config import DATA_DIR, ROOT
 from jarvis.state import AppState
 from jarvis.stt import contains_speech, record_command_wav, transcribe_audio
 from jarvis.tts import audio_api_path, speak_to_file
+from jarvis.wake_control import hud_listening
 
 _WAKE_LOCK = threading.Lock()
 _STARTED = False
@@ -117,16 +118,32 @@ def _create_porcupine():
 
     key = _access_key()
     paths = _keyword_paths()
+    sensitivity = float(os.getenv("WAKE_SENSITIVITY", "0.55").strip() or "0.55")
+    try:
+        from jarvis.voice_prefs import load_voice_prefs
+
+        sensitivity = float(load_voice_prefs().get("wake_sensitivity") or sensitivity)
+    except Exception:
+        pass
+    sensitivity = max(0.1, min(1.0, sensitivity))
     if paths:
-        print(f"[+] Wake: usando .ppn custom ({paths[0]})")
-        return pvporcupine.create(access_key=key, keyword_paths=paths)
-    builtins = _builtin_keywords()
+        print(f"[+] Wake: usando .ppn custom ({paths[0]}) sens={sensitivity}")
+        return pvporcupine.create(
+            access_key=key,
+            keyword_paths=paths,
+            sensitivities=[sensitivity] * len(paths),
+        )
+    keywords = _builtin_keywords()
     print(
         "[+] Wake: sin data/wake/ilaria_windows.ppn ni data/models/ilaria_windows.ppn — "
-        f"last resort built-in {builtins}. Para «Ilaria» entrená el .ppn "
+        f"last resort built-in {keywords}. Para «Ilaria» entrená el .ppn "
         f"(data/wake/README.txt). {_HUD_LIBRE_HINT}"
     )
-    return pvporcupine.create(access_key=key, keywords=builtins)
+    return pvporcupine.create(
+        access_key=key,
+        keywords=keywords,
+        sensitivities=[sensitivity] * len(keywords),
+    )
 
 
 def _listen_loop(state: AppState) -> None:
@@ -136,13 +153,23 @@ def _listen_loop(state: AppState) -> None:
     recorder = None
     try:
         porcupine = _create_porcupine()
-        recorder = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)
+        device = int(os.getenv("WAKE_MIC_INDEX", "-1").strip() or "-1")
+        try:
+            from jarvis.voice_prefs import load_voice_prefs
+
+            device = int(load_voice_prefs().get("wake_mic_index", device))
+        except Exception:
+            pass
+        recorder = PvRecorder(device_index=device, frame_length=porcupine.frame_length)
         recorder.start()
         print(
             f"[+] Mic wake listo @ {porcupine.sample_rate} Hz "
-            f"(device={recorder.selected_device}). Esperando keyword…"
+            f"(device={recorder.selected_device} index={device}). Esperando keyword…"
         )
         while True:
+            if hud_listening():
+                time.sleep(0.15)
+                continue
             pcm = recorder.read()
             index = porcupine.process(pcm)
             if index < 0:
@@ -151,8 +178,13 @@ def _listen_loop(state: AppState) -> None:
                 continue
             try:
                 print("[!] Wake word detectada — grabando comando…")
-                recorder.stop()
-                _handle_wake(state, porcupine.sample_rate, porcupine.frame_length)
+                # Reuse the same PvRecorder (no reopen) so Windows keeps the mic.
+                _handle_wake(
+                    state,
+                    porcupine.sample_rate,
+                    porcupine.frame_length,
+                    recorder=recorder,
+                )
             except Exception as exc:  # noqa: BLE001
                 print(f"[-] Wake handler error: {exc}")
             finally:
@@ -180,7 +212,13 @@ def _listen_loop(state: AppState) -> None:
             pass
 
 
-def _handle_wake(state: AppState, sample_rate: int, frame_length: int) -> None:
+def _handle_wake(
+    state: AppState,
+    sample_rate: int,
+    frame_length: int,
+    *,
+    recorder: object | None = None,
+) -> None:
     owner = state.accounts.owner()
     if owner is None:
         print("[-] Wake: no hay owner registrado.")
@@ -190,7 +228,7 @@ def _handle_wake(state: AppState, sample_rate: int, frame_length: int) -> None:
     brain = state.brain_for(owner)
     settings = brain.settings
     if not settings.has_stt:
-        print("[-] Wake: falta GROQ_API_KEY / OPENAI_API_KEY para Whisper.")
+        print("[-] Wake: falta Faster-Whisper local o GROQ/OPENAI para STT.")
         return
     brain.bus.push("Te escucho…", audio_url=None)
     try:
@@ -198,13 +236,14 @@ def _handle_wake(state: AppState, sample_rate: int, frame_length: int) -> None:
             sample_rate=sample_rate,
             frame_length=frame_length,
             max_seconds=seconds,
+            recorder=recorder,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[-] Wake STT record error: {exc}")
         wav = b""
     if len(wav) < 800 or not contains_speech(wav):
         print("[-] Wake: VAD descartó el clip (sin voz) antes de Whisper.")
-        reply = "No te escuché bien, pá. Decilo otra vez después de llamarme."
+        reply = "No te escuché bien. Decilo otra vez después de llamarme."
         _announce(brain, reply)
         return
     try:
@@ -213,7 +252,7 @@ def _handle_wake(state: AppState, sample_rate: int, frame_length: int) -> None:
         print(f"[-] Wake STT error: {exc}")
         text = ""
     if not text.strip():
-        reply = "No te escuché bien, pá. Decilo otra vez después de llamarme."
+        reply = "No te escuché bien. Decilo otra vez después de llamarme."
         _announce(brain, reply)
         return
     print(f"[+] Wake STT: {text}")
