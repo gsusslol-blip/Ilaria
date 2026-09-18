@@ -35,11 +35,12 @@ final class Brain {
         if let local = PhoneLocal.handle(raw: message, prefs: prefs) {
             return local
         }
+        // Independent by default: PC only when linked and sync is not paused (solo=false).
         if prefs.token.isEmpty || prefs.solo {
             return ChatOut(text: PhoneLocal.fallback(prefs: prefs, linked: false))
         }
         guard prefs.resolveUrl("/api/chat") != nil else {
-            return ChatOut(text: PhoneLocal.fallback(prefs: prefs, linked: false))
+            return ChatOut(text: PhoneLocal.fallback(prefs: prefs, linked: true))
         }
         UIDevice.current.isBatteryMonitoringEnabled = true
         let battery = UIDevice.current.batteryLevel

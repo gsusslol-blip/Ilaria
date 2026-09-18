@@ -7,6 +7,7 @@ import json
 import threading
 import time
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from threading import Lock
 from typing import Any
@@ -114,6 +115,11 @@ class ProfileIn(BaseModel):
     packs: list[str] = Field(default_factory=list)
     groq_key: str = ""
     custom_tone: str = "equilibrado"
+    tts_voice: str = "ilaria"
+
+
+class VoicePreviewIn(BaseModel):
+    voice_id: str = "ilaria"
 
 
 class AdminUserIn(BaseModel):
@@ -532,8 +538,48 @@ def create_hud(state: AppState) -> FastAPI:
             "has_llm": state.settings_for(user).has_llm,
             "has_stt": state.settings_for(user).has_stt,
             "tts": "piper" if piper_available() else "edge",
+            "tts_voice": user.tts_voice,
             "version": __version__,
         }
+
+    @app.get("/api/voices")
+    async def voices_catalog(request: Request) -> dict[str, Any]:
+        require_user(request)
+        from jarvis.voices import DEFAULT_VOICE_ID, list_voices
+
+        return {"voices": list_voices(available_only=False), "default": DEFAULT_VOICE_ID}
+
+    @app.post("/api/voices/preview")
+    async def voices_preview(payload: VoicePreviewIn, request: Request) -> dict[str, Any]:
+        user = require_user(request)
+        if not gate.allow(f"tts:{user.id}", 20, 60):
+            raise HTTPException(status_code=429, detail="Demasiadas pruebas de voz.")
+        from jarvis.voices import normalize_voice_id, preview_line, resolve_runtime
+
+        voice_id = normalize_voice_id(payload.voice_id)
+        runtime = resolve_runtime(voice_id)
+        settings = replace(
+            state.settings_for(user),
+            tts_provider=runtime["provider"],
+            tts_voice=runtime["tts_voice"],
+            piper_model_name=runtime.get("piper_model") or "",
+            voice_id=voice_id,
+        )
+        line = preview_line(voice_id)
+        try:
+            path = await speak_to_file(
+                settings,
+                line,
+                f"tts-{user.id}-preview-{time.time_ns()}.mp3",
+            )
+            return {
+                "ok": True,
+                "voice_id": voice_id,
+                "text": line,
+                "audio_url": audio_api_path(path.name),
+            }
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"No pude previsualizar: {exc}") from exc
 
     @app.get("/api/welcome-report")
     async def welcome_report(request: Request) -> dict[str, Any]:
@@ -606,6 +652,7 @@ def create_hud(state: AppState) -> FastAPI:
             packs=normalize_pack_ids(payload.packs),
             groq_key=groq,
             custom_tone=payload.custom_tone,
+            tts_voice=payload.tts_voice,
         )
         state.drop_brain(updated.id)
         brain = state.brain_for(updated)
@@ -613,6 +660,7 @@ def create_hud(state: AppState) -> FastAPI:
             brain.memory.remember("ciudad", payload.city.strip())
         brain.memory.remember("nombre", updated.display_name)
         brain.memory.remember("tono", updated.custom_tone)
+        brain.memory.remember("voz", updated.tts_voice)
         brain.memory.remember("intereses", ", ".join(updated.packs))
         for pid in updated.packs:
             pack = PACKS.get(pid)
@@ -649,6 +697,47 @@ def create_hud(state: AppState) -> FastAPI:
                 for item in items
             ],
         }
+
+    @app.get("/api/intercom")
+    async def intercom_info(request: Request) -> dict[str, Any]:
+        """Status for HUD intercom panel (hidden when not linked)."""
+        require_user(request)
+        from jarvis.intercom import intercom_status
+
+        return await asyncio.to_thread(intercom_status, state.settings)
+
+    @app.post("/api/intercom")
+    async def intercom_post(request: Request) -> dict[str, Any]:
+        user = require_user(request)
+        body = await request.json()
+        action = str((body or {}).get("action") or "status")
+        from jarvis.intercom import run_intercom
+
+        brain = state.brain_for(user)
+        msg = await asyncio.to_thread(
+            lambda: run_intercom(
+                state.settings,
+                action,
+                is_owner=user.is_owner,
+                open_url=lambda url: brain.actions.open_browser(url),
+            )
+        )
+        return {"ok": True, "message": msg}
+
+    @app.get("/api/chat/history")
+    async def chat_history(request: Request) -> dict[str, Any]:
+        """Recent user/assistant turns for the Chat drawer."""
+        user = require_user(request)
+        brain = state.brain_for(user)
+        try:
+            limit = int(request.query_params.get("limit") or 40)
+        except ValueError:
+            limit = 40
+        limit = max(1, min(limit, 80))
+        turns = await asyncio.to_thread(
+            lambda: brain.export_history(f"u{user.id}", limit=limit)
+        )
+        return {"turns": turns, "count": len(turns)}
 
     @app.post("/api/chat")
     async def chat(payload: ChatIn, request: Request) -> dict[str, Any]:
@@ -725,9 +814,10 @@ def create_hud(state: AppState) -> FastAPI:
                     parts.append(value)
                     yield f"event: token\ndata: {json.dumps({'text': value}, ensure_ascii=False)}\n\n"
                     if payload.speak and not early_sent:
+                        from jarvis.personality import scrub_public_reply
                         from jarvis.tts import first_speakable_sentence
 
-                        sentence = first_speakable_sentence("".join(parts))
+                        sentence = first_speakable_sentence(scrub_public_reply("".join(parts)))
                         if sentence:
                             early_sent = True
                             early_sentence = sentence
@@ -746,11 +836,16 @@ def create_hud(state: AppState) -> FastAPI:
                                 except Exception:  # noqa: BLE001
                                     early_audio_url = None
                 elif kind == "error":
-                    yield f"event: error\ndata: {json.dumps({'detail': value or 'error'}, ensure_ascii=False)}\n\n"
+                    from jarvis.personality import scrub_public_reply
+
+                    detail = scrub_public_reply(value or "error")
+                    yield f"event: error\ndata: {json.dumps({'detail': detail}, ensure_ascii=False)}\n\n"
                     return
                 elif kind == "end":
                     break
-            reply = _with_android_hint(brain, brain._last_assistant(session_id))
+            from jarvis.personality import scrub_public_reply
+
+            reply = scrub_public_reply(_with_android_hint(brain, brain._last_assistant(session_id)))
             audio_url = None
             skip_full_tts = False
             # If early TTS already covered a short final reply, skip a second render.

@@ -46,6 +46,105 @@
       height: 100%;
       min-height: 0;
     }
+    /* Public / phone / Play clients: no tactical history column */
+    body.hud-lean .sidebar-left {
+      display: none !important;
+    }
+    body.hud-lean .dashboard-container {
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+    }
+    body.hud-lean .sidebar-right .ops-only {
+      display: none !important;
+    }
+    /* Chat drawer — available for everyone (lean + ops) */
+    #chat-drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.18s ease;
+    }
+    #chat-drawer.open {
+      pointer-events: auto;
+      opacity: 1;
+    }
+    #chat-drawer .chat-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+    }
+    #chat-drawer .chat-panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: min(420px, 100%);
+      height: 100%;
+      background: #0b0b0b;
+      border-left: 1px solid rgba(255, 42, 84, 0.28);
+      display: flex;
+      flex-direction: column;
+      transform: translateX(12px);
+      transition: transform 0.2s ease;
+      box-shadow: -16px 0 48px rgba(0, 0, 0, 0.45);
+    }
+    #chat-drawer.open .chat-panel { transform: translateX(0); }
+    #chat-drawer .chat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    #chat-drawer .chat-head h3 {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent-friday);
+    }
+    #chat-drawer .chat-head button {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: var(--text-muted);
+      border-radius: 999px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    #chat-drawer #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px 24px;
+      min-height: 0;
+    }
+    #chatOpen, #histBtn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .core-top {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 10px 12px 0;
+      flex-shrink: 0;
+    }
+    .core-top button {
+      background: rgba(255, 42, 84, 0.12);
+      border: 1px solid rgba(255, 42, 84, 0.35);
+      color: var(--accent-friday);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .core-top button:hover {
+      background: rgba(255, 42, 84, 0.22);
+    }
     .sidebar-left, .sidebar-right, .main-core {
       background: var(--bg-panel);
       border: 1px solid var(--border-color);
@@ -516,6 +615,11 @@
       text-overflow: ellipsis;
     }
     .sync-panel.hidden { display: none; }
+    .watch-panel.hidden,
+    .link-panel.hidden,
+    .metric-row.hidden {
+      display: none !important;
+    }
     #histBtn {
       display: none;
       position: fixed;
@@ -577,6 +681,10 @@
         height: auto;
         min-height: 100%;
       }
+      body.hud-lean .dashboard-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr auto;
+      }
       .sidebar-right {
         order: 3;
         max-height: none;
@@ -584,6 +692,7 @@
       }
       .main-core { order: 1; min-height: 62vh; }
       .sidebar-left { order: 2; max-height: 40vh; }
+      body.hud-lean .sidebar-left { display: none !important; }
       #histBtn { display: inline-flex; align-items: center; justify-content: center; }
       #history:not(.open) #log { display: none; }
     }
@@ -600,18 +709,20 @@
         <a href="/admin" id="adminLink" hidden>Dueño</a>
         <a href="/settings">Perfil</a>
         <button type="button" id="out">Salir</button>
-        <button type="button" id="histClose" title="Colapsar historial">Hist</button>
+        <button type="button" id="histClose" title="Abrir chat">Chat</button>
       </div>
       <div class="history-section" style="flex:1;min-height:0;display:flex;flex-direction:column;">
-        <h3>Historial táctico</h3>
-        <aside id="history" class="open" aria-hidden="false">
-          <div class="drawer-bar"><span>Historial</span></div>
-          <div id="log"></div>
-        </aside>
+        <h3>Chat reciente</h3>
+        <p style="margin:0;font-size:12px;color:var(--text-muted)">
+          Tocá <strong>Chat</strong> arriba o el botón del centro para ver lo hablado antes.
+        </p>
       </div>
     </aside>
 
     <main class="main-core">
+      <div class="core-top">
+        <button type="button" id="chatOpen" title="Ver chat anterior (Ctrl+H)">Chat</button>
+      </div>
       <div class="voice-module">
         <div class="orb-wrap mood-happy" id="orb" aria-hidden="true">
           <span class="ring"></span>
@@ -642,14 +753,14 @@
     </main>
 
     <aside class="sidebar-right">
-      <div class="widget-box">
+      <div class="widget-box ops-only">
         <h3>Misión</h3>
         <div class="metric-row"><span>Pack</span><strong id="metric-pack">—</strong></div>
         <div class="metric-row"><span>Próximo</span><strong id="metric-next">—</strong></div>
         <div class="metric-row"><span>Última acción</span><strong id="metric-action">—</strong></div>
         <div class="metric-row"><span>Continuidad</span><strong id="metric-continue">—</strong></div>
       </div>
-      <div class="widget-box">
+      <div class="widget-box ops-only">
         <h3>Estado</h3>
         <div class="metric-row"><span>Ollama LLM</span><strong class="text-green" id="metric-ollama">—</strong></div>
         <div class="metric-row"><span>Puerto HUD</span><strong id="metric-port">—</strong></div>
@@ -658,15 +769,15 @@
         <div class="metric-row"><span>LAN UDP</span><strong id="metric-lan">—</strong></div>
         <div class="metric-row"><span>Red</span><strong id="metric-net-mode">—</strong></div>
         <div class="metric-row"><span>WAN</span><strong id="metric-wan">—</strong></div>
-        <div class="metric-row"><span>Home Assistant</span><strong id="metric-ha">—</strong></div>
+        <div class="metric-row" id="row-ha"><span>Home Assistant</span><strong id="metric-ha">—</strong></div>
         <div class="metric-row"><span>Quiet-Mode</span><strong id="metric-quiet">—</strong></div>
         <div class="metric-row"><span>RAM</span><strong id="metric-ram">—</strong></div>
         <div class="metric-row"><span>Latencia</span><strong id="metric-lat">—</strong></div>
         <div class="metric-row"><span>Versión</span><strong id="metric-version">—</strong></div>
       </div>
-      <div class="widget-box watch-panel">
+      <div class="widget-box watch-panel hidden" id="watch-panel">
         <h3>Reloj</h3>
-        <div class="watch-main" id="metric-watch">sin sync</div>
+        <div class="watch-main" id="metric-watch">—</div>
         <div class="watch-stats">
           <div class="watch-stat"><span>HR</span><strong id="metric-watch-hr">—</strong></div>
           <div class="watch-stat"><span>HRV</span><strong id="metric-watch-hrv">—</strong></div>
@@ -678,12 +789,12 @@
         <div class="spark-row"><span>HR</span><svg id="spark-hr" viewBox="0 0 120 28" preserveAspectRatio="none"></svg></div>
         <div class="spark-row"><span>HRV</span><svg id="spark-hrv" viewBox="0 0 120 28" preserveAspectRatio="none"></svg></div>
       </div>
-      <div class="widget-box">
+      <div class="widget-box ops-only link-panel hidden" id="mobile-panel">
         <h3>Dispositivo móvil</h3>
         <div class="metric-row"><span>Android min</span><strong id="metric-android">—</strong></div>
         <div class="metric-row"><span>Canal PC</span><span id="queue-count">local-first</span></div>
       </div>
-      <div class="widget-box sync-panel" id="sync-panel">
+      <div class="widget-box sync-panel ops-only hidden" id="sync-panel">
         <h3>WAN · sync móvil</h3>
         <p style="margin:0 0 8px;font-size:12px;color:var(--text-muted)">
           Escaneá con la cámara del celu (fuera del Wi‑Fi).
@@ -693,7 +804,7 @@
         </div>
         <span class="url-text" id="hud-tunnel-url">Sin túnel WAN</span>
       </div>
-      <div class="widget-box kitchen-panel">
+      <div class="widget-box kitchen-panel ops-only link-panel hidden" id="kitchen-panel">
         <h3>Recetario local</h3>
         <button type="button" class="ghost-btn" id="kitchen-list-btn" style="width:100%;margin-bottom:8px">
           Listar recetas
@@ -702,9 +813,29 @@
           <span class="empty-text">Panel pasivo. Tocá listar o pedí «qué recetas tengo».</span>
         </div>
       </div>
+      <div class="widget-box link-panel hidden" id="intercom-panel">
+        <h3>Intercomunicador</h3>
+        <div class="metric-row"><span>Estado</span><strong id="metric-intercom">—</strong></div>
+        <button type="button" class="ghost-btn" id="intercom-answer-btn" style="width:100%;margin-top:8px">
+          Atender
+        </button>
+        <button type="button" class="ghost-btn" id="intercom-view-btn" style="width:100%;margin-top:6px">
+          Ver cámara
+        </button>
+      </div>
     </aside>
   </div>
-  <button type="button" id="histBtn" title="Historial (Ctrl+H)">Hist</button>
+  <div id="chat-drawer" aria-hidden="true">
+    <div class="chat-backdrop" id="chatBackdrop"></div>
+    <aside class="chat-panel" role="dialog" aria-label="Chat anterior">
+      <div class="chat-head">
+        <h3>Chat</h3>
+        <button type="button" id="chatClose">Cerrar</button>
+      </div>
+      <div id="log"></div>
+    </aside>
+  </div>
+  <button type="button" id="histBtn" title="Chat (Ctrl+H)">Chat</button>
 
   <script>
     const log = document.getElementById("log");
@@ -716,15 +847,35 @@
     const voiceEl = document.getElementById("voice");
     const orb = document.getElementById("orb");
     const caption = document.getElementById("caption");
-    const history = document.getElementById("history");
+    const chatDrawer = document.getElementById("chat-drawer");
+    const chatOpen = document.getElementById("chatOpen");
+    const chatClose = document.getElementById("chatClose");
+    const chatBackdrop = document.getElementById("chatBackdrop");
     const histBtn = document.getElementById("histBtn");
     const histClose = document.getElementById("histClose");
+    function historyOpen() {
+      return chatDrawer.classList.contains("open");
+    }
+    function toggleHistory(force) {
+      const open = typeof force === "boolean" ? force : !historyOpen();
+      chatDrawer.classList.toggle("open", open);
+      chatDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+      if (open) {
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+    chatOpen.addEventListener("click", () => toggleHistory(true));
+    chatClose.addEventListener("click", () => toggleHistory(false));
+    chatBackdrop.addEventListener("click", () => toggleHistory(false));
     histBtn.addEventListener("click", () => toggleHistory());
-    histClose.addEventListener("click", () => toggleHistory(false));
+    histClose.addEventListener("click", () => toggleHistory(true));
     document.addEventListener("keydown", (ev) => {
       if ((ev.ctrlKey || ev.metaKey) && (ev.key === "h" || ev.key === "H")) {
         ev.preventDefault();
         toggleHistory();
+      }
+      if (ev.key === "Escape" && historyOpen()) {
+        toggleHistory(false);
       }
     });
     const canRecord = Boolean(navigator.mediaDevices && window.MediaRecorder);
@@ -784,16 +935,6 @@
       }
     }
 
-    function historyOpen() {
-      return history.classList.contains("open");
-    }
-
-    function toggleHistory(force) {
-      const open = typeof force === "boolean" ? force : !historyOpen();
-      history.classList.toggle("open", open);
-      history.setAttribute("aria-hidden", open ? "false" : "true");
-    }
-
     function scheduleCaptionHide() {
       clearTimeout(captionTimer);
       const delay = (speaking || busy) ? 400 : 7000;
@@ -806,8 +947,48 @@
       }, delay);
     }
 
+    function humanizeDisplayText(text) {
+      let raw = String(text || "");
+      raw = raw.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => {
+        try { return String.fromCharCode(parseInt(h, 16)); } catch (e) { return _; }
+      });
+      raw = raw.replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => {
+        try { return String.fromCodePoint(parseInt(h, 16)); } catch (e) { return _; }
+      });
+      raw = raw.replace(/[\u202f\u00a0\u2007\u2008\u2009\u200a\u200b\ufeff]/g, " ");
+      raw = raw.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1");
+      raw = raw.replace(/`([^`]+)`/g, "$1");
+      raw = raw.replace(/\$\$([\s\S]+?)\$\$/g, (_, m) => latexToPlain(m));
+      raw = raw.replace(/\\\[([\s\S]+?)\\\]/g, (_, m) => latexToPlain(m));
+      raw = raw.replace(/\\\(([\s\S]+?)\\\)/g, (_, m) => latexToPlain(m));
+      raw = raw.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_, m) => latexToPlain(m));
+      raw = latexToPlain(raw);
+      return raw.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    }
+
+    function latexToPlain(chunk) {
+      let body = String(chunk || "");
+      const pairs = [
+        [/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "($1)/($2)"],
+        [/\\sqrt\{([^{}]+)\}/g, "raíz de $1"],
+        [/\\times/g, "×"], [/\\cdot/g, "·"], [/\\pm/g, "±"],
+        [/\\leq/g, "≤"], [/\\geq/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"],
+        [/\\infty/g, "infinito"], [/\\partial/g, "∂"], [/\\nabla/g, "∇"],
+        [/\\sum/g, "suma"], [/\\int/g, "integral"],
+        [/\\alpha/g, "alfa"], [/\\beta/g, "beta"], [/\\gamma/g, "gamma"],
+        [/\\delta/g, "delta"], [/\\epsilon/g, "épsilon"], [/\\theta/g, "theta"],
+        [/\\lambda/g, "lambda"], [/\\mu/g, "mu"], [/\\pi/g, "pi"],
+        [/\\rho/g, "rho"], [/\\sigma/g, "sigma"], [/\\phi/g, "phi"], [/\\omega/g, "omega"],
+        [/\\left/g, ""], [/\\right/g, ""], [/\\Bigl?/g, ""], [/\\bigr?/g, ""],
+        [/\\,/g, " "], [/\\;/g, " "], [/\\!/g, ""], [/\\%/g, "%"], [/\\_/g, "_"],
+      ];
+      for (const [re, repl] of pairs) body = body.replace(re, repl);
+      body = body.replace(/\\[a-zA-Z]+\*?/g, "");
+      return body.replace(/[{}]/g, "").replace(/[ \t]{2,}/g, " ").trim();
+    }
+
     function showCaption(text, role) {
-      const line = (text || "").trim();
+      const line = humanizeDisplayText(text);
       if (!line) return;
       clearTimeout(captionTimer);
       caption.textContent = line;
@@ -816,13 +997,29 @@
       scheduleCaptionHide();
     }
 
-    function add(role, text) {
+    function add(role, text, opts) {
       const el = document.createElement("div");
       el.className = "msg " + role;
-      el.textContent = text;
+      el.textContent = role === "jarvis" ? humanizeDisplayText(text) : text;
       log.appendChild(el);
       log.scrollTop = log.scrollHeight;
-      showCaption(text, role);
+      if (!(opts && opts.silent)) showCaption(text, role);
+    }
+
+    async function loadChatHistory() {
+      try {
+        const data = await fetch("/api/chat/history?limit=40").then((r) => r.json());
+        const turns = data.turns || [];
+        if (!turns.length) return false;
+        log.innerHTML = "";
+        turns.forEach((turn) => {
+          const role = turn.role === "user" ? "user" : "jarvis";
+          add(role, turn.content || "", { silent: true });
+        });
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
 
     function sleep(ms) {
@@ -1106,6 +1303,7 @@
         let earlyPlaying = false;
         let skipFull = false;
         let latencyMs = 0;
+        let streamRaw = "";
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -1125,7 +1323,8 @@
             let data = {};
             try { data = JSON.parse(dataLines.join("\n")); } catch (e) { continue; }
             if (eventName === "token" && data.text) {
-              el.textContent += data.text;
+              streamRaw += data.text;
+              el.textContent = humanizeDisplayText(streamRaw);
               showCaption(el.textContent, "jarvis");
               log.scrollTop = log.scrollHeight;
             }
@@ -1135,11 +1334,11 @@
               playAudioUrl(data.audio_url, data.text || "").catch(() => {});
             }
             if (eventName === "error") {
-              el.textContent = data.detail || "Error en el stream.";
+              el.textContent = humanizeDisplayText(data.detail || "Error en el stream.");
               showCaption(el.textContent, "jarvis");
             }
             if (eventName === "done") {
-              finalReply = data.reply || el.textContent;
+              finalReply = humanizeDisplayText(data.reply || streamRaw || el.textContent);
               el.textContent = finalReply;
               audioUrl = data.audio_url || "";
               skipFull = !!data.skip_full_tts;
@@ -1287,10 +1486,19 @@
       const name = (data.user && data.user.display_name) || "";
       const assistant = (data.status && data.status.name) || "Ilaria";
       document.title = assistant;
-      document.getElementById("brand").textContent = assistant.toUpperCase();
-      if (data.user && data.user.is_owner) {
-        document.getElementById("adminLink").hidden = false;
+      const brandEl = document.getElementById("brand");
+      if (brandEl) brandEl.textContent = assistant.toUpperCase();
+      const isOwner = !!(data.user && data.user.is_owner);
+      const isPhone = /android|iphone|ipad|mobile/i.test(navigator.userAgent || "");
+      // Ops console (left history + diagnostics): only local owner on desktop.
+      const lean = !isOwner || isPhone;
+      document.body.classList.toggle("hud-lean", lean);
+      document.body.classList.toggle("hud-ops", !lean);
+      if (isOwner) {
+        const admin = document.getElementById("adminLink");
+        if (admin) admin.hidden = false;
       }
+      await loadChatHistory();
       let greeted = false;
       try {
         const welcome = await fetch("/api/welcome-report");
@@ -1466,17 +1674,24 @@
             ? stack.remote_url
             : "Sin túnel (solo LAN / NGROK_AUTHTOKEN)";
         }
-        if (qrImg && stack.qr_ready) {
+        if (qrImg && stack.qr_ready && stack.remote_url) {
           qrImg.style.display = "block";
           qrImg.src = "/sync_qr.svg?t=" + Date.now();
           if (syncPanel) syncPanel.classList.remove("hidden");
-        } else if (qrImg && !stack.remote_url) {
-          qrImg.style.display = "none";
+        } else {
+          if (qrImg) qrImg.style.display = "none";
+          if (syncPanel) syncPanel.classList.add("hidden");
         }
+        const haRow = document.getElementById("row-ha");
         if (haEl) {
           const ha = String(stack.home_assistant || "—");
-          haEl.textContent = ha === "SUCCESS" ? "ONLINE" : (ha === "NOT_CONFIGURED" ? "N/C" : "OFF");
-          haEl.className = ha === "SUCCESS" ? "text-green" : "text-warn";
+          if (ha === "NOT_CONFIGURED" || ha === "—" || !ha) {
+            if (haRow) haRow.classList.add("hidden");
+          } else {
+            if (haRow) haRow.classList.remove("hidden");
+            haEl.textContent = ha === "SUCCESS" ? "ONLINE" : "OFF";
+            haEl.className = ha === "SUCCESS" ? "text-green" : "text-warn";
+          }
         }
         if (quietEl) {
           const q = stack.quiet_mode || {};
@@ -1498,36 +1713,80 @@
       try {
         const watchUrl = "/api/wellness/smartwatch?history_limit=" + encodeURIComponent(String(watchHistoryDays));
         const watch = await fetch(watchUrl).then((r) => r.json());
+        const watchPanel = document.getElementById("watch-panel");
         const watchEl = document.getElementById("metric-watch");
         const hrEl = document.getElementById("metric-watch-hr");
         const hrvEl = document.getElementById("metric-watch-hrv");
-        if (watchEl) {
-          if (watch.status === "success") {
+        if (watch.status === "success") {
+          if (watchPanel) watchPanel.classList.remove("hidden");
+          if (watchEl) {
             watchEl.textContent =
               (watch.pasos_hoy || 0) + " pasos · " + String(watch.nivel_energia_estimado || "").split(".")[0];
             watchEl.className = "watch-main text-green";
             watchEl.title = watch.speech || "";
-            if (hrEl) hrEl.textContent = Math.round(watch.hr_promedio_bpm || 0) + " bpm";
-            if (hrvEl) hrvEl.textContent = Math.round(watch.hrv_ms || 0) + " ms";
-            drawSpark("spark-hr", (watch.history || []).map((p) => Number(p.hr) || 0), "#ff5f4f");
-            drawSpark("spark-hrv", (watch.history || []).map((p) => Number(p.hrv) || 0), "#4fd6ff");
-          } else {
-            watchEl.textContent = "sin sync";
-            watchEl.className = "watch-main text-warn";
-            if (hrEl) hrEl.textContent = "—";
-            if (hrvEl) hrvEl.textContent = "—";
-            drawSpark("spark-hr", [], "#ff5f4f");
-            drawSpark("spark-hrv", [], "#4fd6ff");
           }
+          if (hrEl) hrEl.textContent = Math.round(watch.hr_promedio_bpm || 0) + " bpm";
+          if (hrvEl) hrvEl.textContent = Math.round(watch.hrv_ms || 0) + " ms";
+          drawSpark("spark-hr", (watch.history || []).map((p) => Number(p.hr) || 0), "#ff5f4f");
+          drawSpark("spark-hrv", (watch.history || []).map((p) => Number(p.hrv) || 0), "#4fd6ff");
+        } else if (watchPanel) {
+          watchPanel.classList.add("hidden");
         }
-      } catch (e) {}
+      } catch (e) {
+        const watchPanel = document.getElementById("watch-panel");
+        if (watchPanel) watchPanel.classList.add("hidden");
+      }
       try {
         const meta = await fetch("/api/meta").then((r) => r.json());
         const andEl = document.getElementById("metric-android");
+        const mobilePanel = document.getElementById("mobile-panel");
+        const linkedPhone = !!(meta.phone_linked || meta.last_phone || meta.android_seen);
         if (andEl) andEl.textContent = meta.min_required_android_client
           ? ("min " + meta.min_required_android_client)
           : "—";
-      } catch (e) {}
+        if (mobilePanel) {
+          if (linkedPhone) mobilePanel.classList.remove("hidden");
+          else mobilePanel.classList.add("hidden");
+        }
+      } catch (e) {
+        const mobilePanel = document.getElementById("mobile-panel");
+        if (mobilePanel) mobilePanel.classList.add("hidden");
+      }
+      try {
+        const recipes = await fetch("/api/kitchen/recipes").then((r) => r.json());
+        const kitchenPanel = document.getElementById("kitchen-panel");
+        const items = recipes.recetas || [];
+        if (kitchenPanel) {
+          if (items.length) kitchenPanel.classList.remove("hidden");
+          else kitchenPanel.classList.add("hidden");
+        }
+      } catch (e) {
+        const kitchenPanel = document.getElementById("kitchen-panel");
+        if (kitchenPanel) kitchenPanel.classList.add("hidden");
+      }
+      try {
+        const ic = await fetch("/api/intercom").then((r) => r.json());
+        const panel = document.getElementById("intercom-panel");
+        const label = document.getElementById("metric-intercom");
+        if (panel) {
+          if (ic.linked) {
+            panel.classList.remove("hidden");
+            if (label) {
+              const bits = [];
+              if (ic.has_button) bits.push("botón");
+              if (ic.has_lock) bits.push("cerradura");
+              if (ic.has_camera) bits.push("cámara");
+              label.textContent = (bits.join(" · ") || "vinculado") + (ic.ha_ready ? "" : " · sin HA");
+              label.className = ic.ha_ready ? "text-green" : "text-warn";
+            }
+          } else {
+            panel.classList.add("hidden");
+          }
+        }
+      } catch (e) {
+        const panel = document.getElementById("intercom-panel");
+        if (panel) panel.classList.add("hidden");
+      }
       try {
         const mission = await fetch("/api/mission").then((r) => r.json());
         const packEl = document.getElementById("metric-pack");
@@ -1570,6 +1829,24 @@
     }
     const kitchenBtn = document.getElementById("kitchen-list-btn");
     if (kitchenBtn) kitchenBtn.addEventListener("click", dispararListadoRecetas);
+
+    async function intercomDo(action) {
+      try {
+        const res = await fetch("/api/intercom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        const data = await res.json();
+        add("jarvis", data.message || "Listo.");
+      } catch (e) {
+        add("jarvis", "No pude hablar con el intercomunicador.");
+      }
+    }
+    const intercomAnswer = document.getElementById("intercom-answer-btn");
+    const intercomView = document.getElementById("intercom-view-btn");
+    if (intercomAnswer) intercomAnswer.addEventListener("click", () => intercomDo("answer"));
+    if (intercomView) intercomView.addEventListener("click", () => intercomDo("view"));
   </script>
 </body>
 </html>

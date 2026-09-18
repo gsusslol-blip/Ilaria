@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import math
+import os
 import struct
 import time
 import wave
@@ -13,6 +14,21 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 
 from jarvis.config import DATA_DIR, Settings
 from jarvis.vad import wav_contains_speech
+
+_last_detected_language = "es"
+
+
+def remember_detected_language(code: str) -> None:
+    """Persist last STT language (ISO-639-1) for LLM mirror + TTS voice routing."""
+    global _last_detected_language
+    lang = (code or "").strip().lower().replace("_", "-")
+    if not lang:
+        return
+    _last_detected_language = lang.split("-")[0][:8]
+
+
+def last_detected_language() -> str:
+    return _last_detected_language or "es"
 
 
 def contains_speech(wav_bytes: bytes, filename: str = "audio.wav") -> bool:
@@ -67,16 +83,32 @@ def transcribe_audio(settings: Settings, data: bytes, filename: str = "audio.web
             break
 
     last_error: Exception | None = None
+    # STT_LANGUAGE=es forces Spanish; empty/auto = Whisper detects.
+    forced = (getattr(settings, "stt_language", None) or os.getenv("STT_LANGUAGE") or "").strip().lower()
+    if forced in {"", "auto", "detect", "*"}:
+        forced = ""
     for attempt in range(3):
         buffer = BytesIO(data)
         buffer.name = f"speech{suffix}"
         try:
-            result = client.audio.transcriptions.create(
-                model=model,
-                file=buffer,
-                language="es",
-            )
-            return (result.text or "").strip()
+            kwargs: dict = {"model": model, "file": buffer}
+            if forced:
+                kwargs["language"] = forced
+            # Prefer verbose JSON when available to read detected language.
+            try:
+                result = client.audio.transcriptions.create(
+                    **kwargs,
+                    response_format="verbose_json",
+                )
+                text = (getattr(result, "text", None) or "").strip()
+                lang = getattr(result, "language", None) or forced or "es"
+                remember_detected_language(str(lang))
+                return text
+            except Exception:
+                result = client.audio.transcriptions.create(**kwargs)
+                text = (result.text or "").strip()
+                remember_detected_language(forced or last_detected_language())
+                return text
         except (APIConnectionError, APITimeoutError) as exc:
             last_error = exc
             time.sleep(0.6 * (attempt + 1))

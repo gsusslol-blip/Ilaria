@@ -38,7 +38,8 @@ final class Prefs: ObservableObject {
         username = ud.string(forKey: "username") ?? ""
         displayName = ud.string(forKey: "display") ?? ""
         city = ud.string(forKey: "city") ?? ""
-        solo = ud.bool(forKey: "solo")
+        // Default independent: phone works without PC until the user opts into sync.
+        solo = ud.object(forKey: "solo") == nil ? true : ud.bool(forKey: "solo")
         telegramBot = ud.string(forKey: "tg_bot") ?? ""
     }
 
@@ -68,7 +69,16 @@ final class Prefs: ObservableObject {
 
     func logout() {
         token = ""
-        solo = false
+        solo = true
+    }
+
+    func enterSolo(user: String = "") {
+        let who = user.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !who.isEmpty {
+            username = who
+            if displayName.isEmpty { displayName = who }
+        }
+        solo = true
     }
 
     func facts() -> [String: String] {

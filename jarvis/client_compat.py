@@ -18,7 +18,7 @@ def android_app_version(device: dict[str, Any] | None) -> str:
 
 
 def android_upgrade_hint(device: dict[str, Any] | None) -> str:
-    """Friendly F.R.I.D.A.Y. note when the phone APK is too old for this PC core."""
+    """Friendly note when the phone APK is too old for this PC core."""
     have = android_app_version(device)
     need = min_required_android_client()
     if not have or not need:

@@ -174,6 +174,59 @@ def buscar_receta_core(comida_id: str, usuario_activo: str = "gsuss") -> str:
     )
 
 
+def _web_recipe_brief(dish: str, *, workspace: Path | None = None) -> tuple[str, str]:
+    """Fast Bing/Yahoo search → short speakable recipe notes. Returns (speakable, raw_hits)."""
+    from jarvis.tools import _search
+
+    q = f"receta de {dish} ingredientes y pasos"
+    raw = _search(q, max_results=4, workspace=workspace)
+    if not raw or raw.startswith("No results") or raw.startswith("Empty"):
+        return "", raw or ""
+    # Prefer snippet bodies; drop engine header noise.
+    snippets: list[str] = []
+    title = ""
+    for block in raw.split("\n- "):
+        lines = [ln.strip() for ln in block.strip().splitlines() if ln.strip()]
+        if not lines:
+            continue
+        if lines[0].lower().startswith("source:"):
+            continue
+        head = lines[0]
+        body = ""
+        for ln in lines[1:]:
+            if ln.startswith("http"):
+                continue
+            body = ln
+            break
+        if not title and head and not head.startswith("http"):
+            title = head[:90]
+        if body and len(body) > 40:
+            snippets.append(body[:280])
+        elif head and len(head) > 20 and not head.startswith("http"):
+            snippets.append(head[:200])
+        if len(snippets) >= 3:
+            break
+    if not snippets:
+        # Fallback: compress the whole search dump.
+        compact = re.sub(r"https?://\S+", "", raw)
+        compact = re.sub(r"\s+", " ", compact).strip()[:700]
+        if len(compact) < 40:
+            return "", raw
+        speakable = (
+            f"Receta de {dish} (búsqueda rápida):\n{compact}\n"
+            "Si querés, la guardo en tu workspace."
+        )
+        return speakable, raw
+    body = "\n".join(f"- {s}" for s in snippets)
+    speakable = (
+        f"Receta de {dish}"
+        + (f" — {title}" if title else "")
+        + f" (búsqueda rápida):\n{body}\n"
+        "Te la resumo de la web; pedime guardarla si te sirve."
+    )
+    return speakable[:1200], raw
+
+
 def buscar_o_generar_receta(
     comida: str,
     workspace: Path,
@@ -181,7 +234,7 @@ def buscar_o_generar_receta(
     llm_fallback_content: str | None = None,
     save: bool = True,
 ) -> str:
-    """Look up local index or persist an LLM-authored recipe into the workspace."""
+    """Look up local index; else web-search fast; else persist provided recipe_text."""
     comida_clean = _normalize_dish(comida)
     hit_key = _canonical(comida_clean)
     root = Path(workspace)
@@ -242,16 +295,49 @@ def buscar_o_generar_receta(
             ensure_ascii=False,
         )
 
+    # Auto web search — never dump tool meta-instructions to the user.
+    if comida_clean:
+        speakable, raw_hits = _web_recipe_brief(comida_clean, workspace=root)
+        if speakable:
+            filename = None
+            if save:
+                slug = (
+                    re.sub(r"[^a-z0-9áéíóúüñ]+", "_", comida_clean, flags=re.I).strip("_")
+                    or "web"
+                )
+                filename = f"receta_{slug[:48]}.txt"
+                try:
+                    path = safe_under(root, filename)
+                    path.write_text(speakable.strip() + "\n", encoding="utf-8")
+                except (OSError, ValueError):
+                    filename = None
+            return json.dumps(
+                {
+                    "status": "success",
+                    "source": "web_search",
+                    "found_in": "web_search",
+                    "dish": comida_clean,
+                    "file_saved": filename,
+                    "speakable": speakable,
+                    "hits_preview": (raw_hits or "")[:400],
+                },
+                ensure_ascii=False,
+            )
+
     known = sorted({str(v["nombre"]) for v in RECETAS_LOCALES.values()})
+    hint = ", ".join(known[:8]) if known else "milanesa, tortilla"
     return json.dumps(
         {
             "status": "not_found",
-            "trigger_llm_fallback": True,
             "dish": comida_clean,
             "comida": comida_clean,
+            "speakable": (
+                f"No encontré «{comida_clean or 'eso'}» ni en local ni en la web ahora. "
+                f"Probá con: {hint}."
+            ),
             "message": (
-                "La receta no existe localmente. Generá ingredientes + pasos en texto breve "
-                "y volvé a llamar kitchen_recipe con recipe_text para guardarla."
+                f"No encontré «{comida_clean or 'eso'}» ni en local ni en la web ahora. "
+                f"Probá con: {hint}."
             ),
             "known": known,
         },

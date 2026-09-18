@@ -362,7 +362,7 @@ def try_local_command(
                 if data.get("speakable"):
                     return str(data["speakable"])
                 if data.get("status") == "not_found":
-                    return str(data.get("message") or out)
+                    return str(data.get("speakable") or data.get("message") or out)
             except Exception:
                 pass
             return out
@@ -509,15 +509,29 @@ def try_local_command(
 
     maps = re.match(
         r"^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|llevame\s+a|ll[eé]vame\s+a|"
-        r"direcciones?\s+(?:a|para))\s+(.+)$",
+        r"direcciones?\s+(?:a|para)|naveg[aá]\s+(?:a|hacia)|gps\s+(?:a|hacia))\s+(.+)$",
         raw,
         re.I,
     )
     if maps:
         dest = maps.group(1).strip()
         if android:
-            return run("phone_hands", action="maps", target=dest)
+            return run("phone_hands", action="navigate", target=dest)
         return run("open_maps", destination=dest, origin="")
+
+    intercom = re.search(
+        r"\b(intercomunicador|portero|timbre(?:\s+de\s+la\s+puerta)?|doorbell|"
+        r"abrir\s+(?:el\s+)?portero|atender\s+(?:el\s+)?(?:timbre|portero|intercomunicador))\b",
+        lower,
+    )
+    if intercom:
+        if re.search(r"\b(ver|c[aá]mara|video|vista)\b", lower):
+            return run("intercom_action", action="view")
+        if re.search(r"\b(abrir\s+puerta|unlock|abrir\s+cerradura)\b", lower):
+            return run("intercom_action", action="open")
+        if re.search(r"\b(estado|status|configurado)\b", lower):
+            return run("intercom_action", action="status")
+        return run("intercom_action", action="answer")
 
     if re.fullmatch(r"https?://\S+", raw.strip(), re.I):
         url = raw.strip()
@@ -549,6 +563,31 @@ def try_local_command(
     if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur)\b", lower):
         return run("web_search", query=raw, max_results=5)
 
+    img = re.match(
+        r"^(?:busc[aá]|busca[r]?|mostr[aá]|dame|quiero|necesito)\s+"
+        r"(?:una?\s+)?(?:ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|"
+        r"diagrama(?:s)?|meme(?:s)?|picture(?:s)?|image(?:s)?)\s+(?:de\s+|del?\s+|sobre\s+)?(.+)$",
+        raw,
+        re.I,
+    )
+    if not img:
+        img = re.match(
+            r"^(?:ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|diagrama(?:s)?)\s+"
+            r"(?:de\s+|del?\s+|sobre\s+)?(.+)$",
+            raw,
+            re.I,
+        )
+    if img:
+        topic = img.group(1).strip(" .?¿!")
+        if topic:
+            if android:
+                return run(
+                    "phone_hands",
+                    action="search",
+                    target=f"{topic} ilustración",
+                )
+            return run("image_search", query=topic, max_results=5, open_browser=True)
+
     search = re.match(
         r"^(?:busca[r]?|busc[aá]|search|noticias(?:\s+de)?|google(?:a[rd]?)?)\s+(.+)$",
         raw,
@@ -556,6 +595,20 @@ def try_local_command(
     )
     if search:
         query = search.group(1).strip()
+        # "busca imagen de X" already handled above; still route image-ish queries.
+        if re.search(r"\b(ilustraci[oó]n|imagen|foto|dibujo|diagrama)\b", query, re.I):
+            topic = re.sub(
+                r"\b(ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|diagrama(?:s)?)\b",
+                "",
+                query,
+                flags=re.I,
+            )
+            topic = re.sub(r"\b(de|del|la|el|un|una|sobre)\b", " ", topic, flags=re.I)
+            topic = " ".join(topic.split()).strip(" .")
+            if topic:
+                if android:
+                    return run("phone_hands", action="search", target=query)
+                return run("image_search", query=topic, max_results=5, open_browser=True)
         if lower.startswith("google"):
             if android:
                 return run("phone_hands", action="search", target=query)
@@ -563,7 +616,9 @@ def try_local_command(
         return run("web_search", query=query, max_results=5)
 
     if len(raw) >= 12 and re.search(
-        r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|c[oó]mo\s+se\s+hace)\b",
+        r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|"
+        r"c[oó]mo\s+se\s+hace|capital\s+de|distancia|qu[eé]\s+es|qui[eé]n\s+es|"
+        r"definici[oó]n|significa)\b",
         lower,
     ):
         return run("web_search", query=raw, max_results=5)
@@ -583,10 +638,9 @@ def local_reply(
     if hit is not None:
         return hit
     return (
-        "Modo local (sin key de Groq): clima, hora, cuentas, notas, timers, Wikipedia y búsqueda.\n"
-        "Ejemplos: «clima», «cuánto es 12*1.21», «anotá comprar leche», «timer 10 minutos», "
-        "«busca dólar blue».\n"
-        f"Para charlar de verdad, pegá una key gratis en Perfil: https://console.groq.com/keys"
+        "Todavía no armé una respuesta con el LLM. "
+        "Probá de nuevo en un segundo, o usá un comando directo "
+        "(«clima», «qué hora es», «busca …», «receta de …», «timer 10 minutos»)."
     )
 
 

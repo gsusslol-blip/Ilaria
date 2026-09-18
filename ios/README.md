@@ -1,6 +1,8 @@
 # Ilaria iOS
 
-Cliente móvil con la misma superficie de comandos que Android (`phone_hands` + modo solo).
+Cliente **independiente** en el iPhone. La PC es opcional: sincronizás cuando querés (mismo Wi‑Fi o URL remota).
+
+Misma superficie de comandos que Android (`phone_hands` + `PhoneLocal`).
 
 ## Requisitos
 
@@ -20,9 +22,9 @@ Sin XcodeGen: en Xcode → *File → New → Project → App*, bundle `app.gsuss
 
 ## Uso
 
-1. PC con Ilaria en la misma Wi‑Fi (`run.bat`, puerto 8787).
-2. En la app: **Perfil** → URL `http://IP-DE-LA-PC:8787` → Entrar con tu usuario.
-3. O **Modo solo** para comandos locales sin PC.
+1. Abrí la app: funciona sola (apps, notas, linterna, etc.). No hace falta la PC.
+2. **Opcional — sincronizar:** Perfil → URL `http://IP-DE-LA-PC:8787` (o Buscar PC) → usuario/clave → **Sincronizar con la PC**.
+3. Podés pausar el sync o desconectarla; el iPhone sigue independiente.
 
 La app manda `client: "ios"`; el backend encola `phone_actions` igual que Android.
 

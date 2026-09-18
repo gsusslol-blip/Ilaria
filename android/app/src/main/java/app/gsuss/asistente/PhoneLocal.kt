@@ -179,7 +179,7 @@ object PhoneLocal {
             )
         }
         val maps = mapsRe.find(text)
-        if (maps != null) return hands("maps", maps.groupValues[1].trim(), "Mapas.")
+        if (maps != null) return hands("navigate", maps.groupValues[1].trim(), "Te armo la ruta.")
 
         if (Regex("""\b(contactos)\b""").containsMatchIn(lower)) return hands("contacts", reply = "Contactos.")
         if (Regex("""\b(calendario|agenda)\b""").containsMatchIn(lower)) return hands("calendar", reply = "Calendario.")
@@ -250,8 +250,8 @@ object PhoneLocal {
         return if (linked) {
             "No pude completar eso en el celular. Probá de nuevo."
         } else {
-            "Estoy en el celular, $who. Apps, notas, volumen y linterna van acá. " +
-                "En Perfil podés enlazar la PC (mismo Wi-Fi) y sincronizamos."
+            "Estoy en el celular, $who — independiente de la PC. Apps, notas, volumen y linterna van acá. " +
+                "Si querés, en Perfil sincronizás con la PC (mismo Wi‑Fi)."
         }
     }
 

@@ -35,18 +35,29 @@ class AppState:
         return path
 
     def settings_for(self, user: User) -> Settings:
+        from jarvis.voices import resolve_runtime
+
         address = user.address_as.strip() or user.display_name
+        runtime = resolve_runtime(getattr(user, "tts_voice", None) or "ilaria")
         return replace(
             self.settings,
             groq_api_key=user.groq_key or self.settings.groq_api_key,
             openai_api_key=user.openai_key or self.settings.openai_api_key,
             gemini_api_key=user.gemini_key or self.settings.gemini_api_key,
             user_name=address or self.settings.user_name,
+            tts_provider=runtime["provider"],
+            tts_voice=runtime["tts_voice"],
+            piper_model_name=runtime.get("piper_model") or "",
+            voice_id=runtime["id"],
         )
 
     def drop_brain(self, user_id: int) -> None:
         with self._lock:
             self._brains.pop(user_id, None)
+
+    def drop_all_brains(self) -> None:
+        with self._lock:
+            self._brains.clear()
 
     def brain_for(self, user: User, first_time: bool = False) -> Brain:
         with self._lock:

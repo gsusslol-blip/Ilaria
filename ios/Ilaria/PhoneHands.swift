@@ -27,9 +27,14 @@ enum PhoneHands {
             }
             open(URL(string: url))
         case "maps", "navigate":
-            let q = (target.isEmpty ? text : target)
-                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            open(URL(string: "http://maps.apple.com/?q=\(q)"))
+            let dest = (target.isEmpty ? text : target)
+            let q = dest.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            if action == "navigate" {
+                // daddr = destination; Apple Maps uses GPS as origin when location is allowed.
+                open(URL(string: "http://maps.apple.com/?daddr=\(q)&dirflg=d"))
+            } else {
+                open(URL(string: "http://maps.apple.com/?q=\(q)"))
+            }
         case "browser":
             let url = target.hasPrefix("http") ? target : (text.hasPrefix("http") ? text : "https://\(target)")
             open(URL(string: url))

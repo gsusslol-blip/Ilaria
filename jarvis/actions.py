@@ -1,4 +1,4 @@
-"""Real PC-side actions JARVIS can execute."""
+"""Real PC-side actions Ilaria can execute."""
 
 from __future__ import annotations
 
@@ -203,7 +203,11 @@ class Actions:
     def wikipedia(self, topic: str) -> str:
         title = quote(topic.strip().replace(" ", "_"))
         url = f"https://es.wikipedia.org/api/rest_v1/page/summary/{title}"
-        headers = {"User-Agent": "Ilaria/1.3.5 personal-assistant"}
+        # Wikimedia requires a descriptive User-Agent (403 if browser-like or too vague).
+        headers = {
+            "User-Agent": "IlariaLocalAssistant/1.5 (https://localhost; personal-assistant)",
+            "Accept": "application/json",
+        }
         try:
             with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
                 response = client.get(url)
@@ -267,19 +271,33 @@ class Actions:
 
         url = _search_url(plat, q)
         launched = _launch_url(url, browser=brow)
-        label = "YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title()
-        return f"{launched} · {label}: {q}"
+        label = (
+            "Imágenes"
+            if plat in {"images", "image", "imagenes", "imágenes", "ilustracion", "ilustración", "fotos", "google_images", "bing_images"}
+            else ("YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title())
+        )
+        # Confirm action for speech; never speak the raw URL.
+        if "URL inválida" in launched or "no encontré" in launched.lower():
+            return launched
+        return f"Listo, abrí {label} con {q}."
 
     def google(self, query: str) -> str:
         return self.app_search_action(browser="brave", platform="google", query=query)
 
     def open_maps(self, destination: str, origin: str = "") -> str:
-        params = {"api": "1", "destination": destination.strip()}
-        if origin.strip():
-            params["origin"] = origin.strip()
+        dest = destination.strip()
+        if not dest:
+            return "Decime a dónde querés ir."
+        params: dict[str, str] = {"api": "1", "destination": dest, "travelmode": "driving"}
+        origin_clean = origin.strip()
+        if origin_clean:
+            params["origin"] = origin_clean
+        # Without origin, Google Maps uses the device GPS when the browser allows it.
         url = "https://www.google.com/maps/dir/?" + urlencode(params)
         webbrowser.open(url)
-        return f"Opened maps: {destination.strip()}"
+        if origin_clean:
+            return f"Mapas: ruta de {origin_clean} a {dest}."
+        return f"Mapas: direcciones a {dest} (origen = GPS del dispositivo si está permitido)."
 
     def compose_whatsapp(self, phone: str, text: str) -> str:
         digits = _phone_digits(phone)
@@ -308,7 +326,7 @@ class Actions:
             if sys.platform == "win32" and key == "spotify":
                 try:
                     os.startfile("spotify:")  # type: ignore[attr-defined]
-                    return "Opened spotify."
+                    return "Listo, abrí Spotify."
                 except OSError:
                     pass
             if sys.platform == "win32" and not os.path.isabs(paths[0]):
@@ -378,8 +396,12 @@ class Actions:
             data = json.loads(result)
             if data.get("status") == "success" and data.get("source") == "local_db":
                 self.daily_journal(f"Consulta de cocina: {data.get('receta', {}).get('nombre') or comida}")
-            elif data.get("status") == "success" and data.get("source") == "llm_generated":
-                self.daily_journal(f"Receta generada y guardada: {comida}")
+            elif data.get("status") == "success" and data.get("source") in {
+                "llm_generated",
+                "web_search",
+                "workspace_file",
+            }:
+                self.daily_journal(f"Receta ({data.get('source')}): {comida}")
         except Exception:
             pass
         return result
@@ -798,6 +820,10 @@ def _search_url(platform: str, query: str) -> str:
     q = quote(query.strip())
     if plat in {"google", "web", "buscar"}:
         return "https://www.google.com/search?q=" + q
+    if plat in {"images", "image", "imagenes", "imágenes", "ilustracion", "ilustración", "fotos", "google_images"}:
+        return "https://www.google.com/search?tbm=isch&q=" + q
+    if plat in {"bing_images", "bingimagenes"}:
+        return "https://www.bing.com/images/search?q=" + q
     if plat in {"ytmusic", "youtube music", "youtubemusic"}:
         return "https://music.youtube.com/search?q=" + q
     if "spotify" in plat:
@@ -853,7 +879,7 @@ def _launch_url(url: str, *, browser: str = "") -> str:
                 creationflags=_CREATE_NO_WINDOW,
             )
             label = Path(exe).stem
-            return f"Abrí {label} → {url}"
+            return f"Listo, abrí {label}."
         except OSError:
             pass
     if sys.platform == "win32" and (browser or "").strip().lower() in {"brave", "chrome", "edge", ""}:
@@ -865,11 +891,11 @@ def _launch_url(url: str, *, browser: str = "") -> str:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            return f"Abrí {cmd} → {url}"
+            return f"Listo, abrí {cmd}."
         except OSError:
             pass
     webbrowser.open(url)
-    return f"Abrí el navegador → {url}"
+    return "Listo, abrí el navegador."
 
 
 _WATCH_PROCS = {
@@ -957,8 +983,9 @@ def _start(target: str, label: str) -> str:
     try:
         os.startfile(target)  # type: ignore[attr-defined]
     except OSError as exc:
-        return f"Could not open {label}: {exc}"
-    return f"Opened {label}."
+        return f"No pude abrir {label}: {exc}"
+    pretty = (label or "la app").strip() or "la app"
+    return f"Listo, abrí {pretty}."
 
 
 def _clipboard_unicode_text() -> str | None:

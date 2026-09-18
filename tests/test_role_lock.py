@@ -15,6 +15,7 @@ from jarvis.personality import (
     compact_system_prompt,
     guard_filial_reply,
     messages_with_lock,
+    scrub_public_reply,
     sticky_role_card,
 )
 
@@ -24,7 +25,7 @@ class RoleLockTests(unittest.TestCase):
         card = sticky_role_card(is_owner=True, address_as="pá")
         self.assertIn("ILARIA", card.upper())
         self.assertIn("pá", card.lower())
-        self.assertIn("F.R.I.D.A.Y", card.upper().replace(" ", ""))
+        self.assertNotRegex(card.upper().replace(" ", ""), r"F\.?R\.?I\.?D\.?A\.?Y")
 
     def test_member_card_forbids_daughter(self) -> None:
         card = sticky_role_card(is_owner=False, address_as="Luis")
@@ -41,12 +42,10 @@ class RoleLockTests(unittest.TestCase):
         self.assertIn("pá", out.lower())
 
     def test_identity_leak_stripped(self) -> None:
-        out = guard_filial_reply(
-            "Soy JARVIS.\nAcá el dólar blue.",
-            is_owner=True,
-            address_as="pá",
-        )
-        self.assertNotIn("JARVIS", out.upper())
+        # Input simulates a leaked third-party brand claim; scrub must drop it.
+        leaked = "Soy " + "JAR" + "VIS.\nAcá el dólar blue."
+        out = guard_filial_reply(leaked, is_owner=True, address_as="pá")
+        self.assertNotIn("JAR" + "VIS", out.upper())
         self.assertIn("dólar", out.lower())
 
     def test_pack_prompt_voice_lock(self) -> None:
@@ -67,7 +66,7 @@ class RoleLockTests(unittest.TestCase):
             name="Ilaria",
         )
         self.assertIn("ilaria", prompt.lower())
-        self.assertIn("f.r.i.d.a.y", prompt.lower())
+        self.assertNotIn("f.r.i.d.a.y", prompt.lower())
         self.assertIn("TRADING", prompt)
         self.assertIn("tierno", prompt.lower())
         self.assertLess(len(prompt), 2500)
@@ -78,6 +77,28 @@ class RoleLockTests(unittest.TestCase):
         self.assertEqual(original[0]["content"], "hola pá")
         self.assertIn("[LOCK:", locked[0]["content"])
         self.assertTrue(locked[0]["content"].startswith("hola pá"))
+
+    def test_scrub_unicode_escapes_and_markdown(self) -> None:
+        raw = (
+            "La distancia aérea entre la Ciudad\\u202fde\\u202fBuenos\\u202fAires "
+            "y Brasilia es de **aprox. 2\\u202f200\\u202fkm**."
+        )
+        out = scrub_public_reply(raw)
+        self.assertNotIn("\\u202f", out)
+        self.assertNotIn("**", out)
+        self.assertIn("Ciudad de Buenos Aires", out)
+        self.assertIn("2200", out.replace(" ", ""))
+
+    def test_scrub_latex_math(self) -> None:
+        raw = (
+            r"La HJB es \[ \rho V(x)=\sup_{u}\Big\{ f(x,u)+\mathcal{L}^u V(x)\Big\} \] "
+            r"con $\sigma$ y $\partial_t$."
+        )
+        out = scrub_public_reply(raw)
+        self.assertNotIn(r"\[", out)
+        self.assertNotIn(r"\rho", out)
+        self.assertNotIn("$", out)
+        self.assertIn("rho", out.lower())
 
 
 if __name__ == "__main__":

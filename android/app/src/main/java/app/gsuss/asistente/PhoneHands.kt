@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.location.Location
+import android.location.LocationManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +14,7 @@ import android.provider.AlarmClock
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import org.json.JSONObject
 
 /** Runs allowlisted intents on this phone. User confirms calls/SMS in the system app. */
@@ -35,13 +38,8 @@ object PhoneHands {
                 start(app, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             }
             "maps", "navigate" -> {
-                val q = Uri.encode(target.ifBlank { text })
-                val uri = if (action == "navigate") {
-                    Uri.parse("google.navigation:q=$q")
-                } else {
-                    Uri.parse("geo:0,0?q=$q")
-                }
-                start(app, Intent(Intent.ACTION_VIEW, uri))
+                val dest = target.ifBlank { text }.ifBlank { "acá" }
+                openMapsDirections(app, dest, preferNav = action == "navigate")
             }
             "browser" -> start(app, Intent(Intent.ACTION_VIEW, Uri.parse(target)))
             "search" -> start(
@@ -298,7 +296,8 @@ object DeviceSnap {
             versionCode = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else @Suppress("DEPRECATION") info.versionCode
         } catch (_: Exception) {
         }
-        return JSONObject()
+        val fix = lastKnownLocation(context)
+        val obj = JSONObject()
             .put("battery", pct)
             .put("charging", plugged)
             .put("wifi", wifi)
@@ -306,5 +305,69 @@ object DeviceSnap {
             .put("app_version", versionName)
             .put("versionName", versionName)
             .put("versionCode", versionCode)
+            .put("gps", fix != null)
+        if (fix != null) {
+            obj.put("lat", fix.latitude).put("lng", fix.longitude)
+        }
+        return obj
     }
+}
+
+private fun openMapsDirections(app: Context, destination: String, preferNav: Boolean) {
+    val encoded = Uri.encode(destination)
+    val fix = lastKnownLocation(app)
+    val uri = when {
+        fix != null -> Uri.parse(
+            "https://www.google.com/maps/dir/?api=1" +
+                "&origin=${fix.latitude},${fix.longitude}" +
+                "&destination=$encoded&travelmode=driving",
+        )
+        preferNav -> Uri.parse("google.navigation:q=$encoded")
+        else -> Uri.parse("geo:0,0?q=$encoded")
+    }
+    val intent = Intent(Intent.ACTION_VIEW, uri)
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        app.startActivity(intent)
+    } catch (_: Exception) {
+        val fallback = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$encoded"),
+        )
+        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            app.startActivity(fallback)
+        } catch (_: Exception) {
+        }
+    }
+}
+
+private fun lastKnownLocation(context: Context): Location? {
+    val fine = ContextCompat.checkSelfPermission(
+        context,
+        android.Manifest.permission.ACCESS_FINE_LOCATION,
+    ) == PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(
+        context,
+        android.Manifest.permission.ACCESS_COARSE_LOCATION,
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) return null
+    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val providers = listOf(
+        LocationManager.GPS_PROVIDER,
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER,
+    )
+    var best: Location? = null
+    for (provider in providers) {
+        try {
+            if (!lm.isProviderEnabled(provider)) continue
+            val loc = lm.getLastKnownLocation(provider) ?: continue
+            if (best == null || loc.time > best.time) best = loc
+        } catch (_: SecurityException) {
+            return null
+        } catch (_: Exception) {
+        }
+    }
+    return best
 }

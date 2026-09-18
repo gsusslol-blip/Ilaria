@@ -49,7 +49,7 @@
       const data = await res.json();
       document.getElementById("meta").innerHTML =
         '<label><input type="checkbox" id="sign"' + (data.allow_signups ? " checked" : "") + "/> Permitir que otros se registren en ESTA PC</label>" +
-        '<label><input type="checkbox" id="hands"' + (data.members_pc_hands ? " checked" : "") + "/> Miembros pueden usar manos de PC (apps, captura, mail)</label>" +
+        '<label><input type="checkbox" id="hands"' + (data.members_pc_hands ? " checked" : "") + "/> Miembros: manos de PC (apps, volumen, captura, mail). Siempre fuera: apagar/reiniciar y bancos</label>" +
         '<button type="button" id="saveMeta">Guardar reglas</button>';
       const box = document.getElementById("users");
       box.innerHTML = "";

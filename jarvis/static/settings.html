@@ -107,6 +107,18 @@
         </div>
       </div>
 
+      <label for="tts_voice">Voz de Ilaria</label>
+      <div class="row">
+        <div>
+          <select id="tts_voice" name="tts_voice"></select>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <button class="ghost" type="button" id="previewVoice" style="width:100%">Probar voz</button>
+        </div>
+      </div>
+      <p class="hint" id="voiceHint" style="margin-top:6px">Piper = offline en esta PC. Edge = Neural online (fallback).</p>
+      <audio id="voicePreview" style="display:none" preload="none"></audio>
+
       <label>Packs de trabajo habilitados</label>
       <div class="chips" id="packs"></div>
 
@@ -158,11 +170,12 @@
       });
     }
 
-    Promise.all([fetch("/api/me"), fetch("/api/packs")])
-      .then(async ([meRes, packRes]) => {
+    Promise.all([fetch("/api/me"), fetch("/api/packs"), fetch("/api/voices")])
+      .then(async ([meRes, packRes, voiceRes]) => {
         if (!meRes.ok) { location.href = "/welcome"; return; }
         const me = await meRes.json();
         const packsPayload = await packRes.json();
+        const voicesPayload = voiceRes.ok ? await voiceRes.json() : { voices: [] };
         const u = me.user || me;
         form.display_name.value = u.display_name || "";
         form.address_as.value = u.address_as || u.display_name || "";
@@ -171,6 +184,26 @@
         form.custom_tone.value = ["tierno", "equilibrado", "seco", "ejecutivo", "serio", "calido"].includes(tone)
           ? tone
           : "tierno";
+        const voiceSel = form.tts_voice;
+        voiceSel.innerHTML = "";
+        (voicesPayload.voices || []).forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v.id;
+          const tag = v.provider === "piper" ? "Piper" : "Edge";
+          opt.textContent = `${v.label} — ${v.style} [${tag}]`;
+          if (!v.available) opt.disabled = true;
+          voiceSel.appendChild(opt);
+        });
+        const chosen = u.tts_voice || me.tts_voice || voicesPayload.default || "ilaria";
+        if ([...voiceSel.options].some((o) => o.value === chosen)) voiceSel.value = chosen;
+        const syncHint = () => {
+          const v = (voicesPayload.voices || []).find((x) => x.id === voiceSel.value);
+          document.getElementById("voiceHint").textContent = v
+            ? `${v.style} · motor: ${v.provider}${v.piper_ready ? " (modelo local OK)" : ""}`
+            : "Elegí una voz para Ilaria.";
+        };
+        voiceSel.onchange = syncHint;
+        syncHint();
         (u.packs || u.enabled_packs || []).forEach((id) => selected.add(id));
         if (selected.size === 0) selected.add("diario");
         renderPacks(packsPayload.packs || []);
@@ -178,6 +211,28 @@
       .catch(() => {
         document.getElementById("err").textContent = "No pude cargar el perfil.";
       });
+
+    document.getElementById("previewVoice").onclick = async () => {
+      document.getElementById("err").textContent = "";
+      document.getElementById("ok").textContent = "Generando muestra…";
+      const res = await fetch("/api/voices/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ voice_id: form.tts_voice.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        document.getElementById("ok").textContent = "";
+        document.getElementById("err").textContent =
+          (typeof data.detail === "string" ? data.detail : null) || "No pude previsualizar.";
+        return;
+      }
+      document.getElementById("ok").textContent = data.text || "Listo.";
+      const audio = document.getElementById("voicePreview");
+      audio.src = data.audio_url;
+      try { await audio.play(); } catch (e) {}
+    };
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -192,6 +247,7 @@
           address_as: form.address_as.value,
           city: form.city.value,
           custom_tone: form.custom_tone.value,
+          tts_voice: form.tts_voice.value,
           groq_key: form.groq_key.value,
           packs: [...selected],
         }),
