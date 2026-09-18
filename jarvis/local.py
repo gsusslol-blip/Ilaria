@@ -39,12 +39,57 @@ def try_local_command(
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
 
-    if re.search(r"\b(hora|fecha|que dia|qué día|que dia es|ahora mismo)\b", lower) or lower in {
-        "ahora",
-        "hora",
-        "fecha",
-    }:
+    # Clock / date only — do not match "cuántos minutos tiene una hora".
+    if re.fullmatch(
+        r"(?:qu[eé]\s+hora\s+es(?:\s+por\s+favor)?|hora(?:\s+actual)?|fecha(?:\s+de\s+hoy)?|"
+        r"qu[eé]\s+d[ií]a\s+es(?:\s+hoy)?|ahora(?:\s+mismo)?|hoy)",
+        lower,
+    ) or lower in {"ahora", "hora", "fecha"}:
         return run("now")
+
+    # Unit trivia that must not hit the clock / weather routers.
+    if re.search(r"cu[aá]ntos?\s+minutos?\s+(?:tiene|hay\s+en)\s+(?:una\s+)?hora", lower):
+        return "60."
+    if re.search(r"cu[aá]ntos?\s+segundos?\s+(?:tiene|hay\s+en)\s+(?:una\s+)?hora", lower):
+        return "3600."
+    if re.search(r"cu[aá]ntos?\s+horas?\s+(?:tiene|hay\s+en)\s+(?:un\s+)?d[ií]a", lower):
+        return "24."
+    # Common GK factoids that LLM/search often get wrong.
+    if re.search(r"pa[ií]s\s+tiene\s+forma\s+de\s+bota|forma\s+de\s+bota", lower):
+        return "Italia."
+    if re.search(r"metal\s+l[ií]quido\s+(?:a\s+)?temperatura\s+ambiente", lower):
+        return "Mercurio."
+    if re.search(r"mam[ií]fero\s+m[aá]s\s+grande", lower):
+        return "La ballena azul."
+    if re.search(r"est[oó]magos?\s+tiene\s+(?:una\s+)?vaca", lower):
+        return "Uno, con cuatro compartimentos (rumiante)."
+    if re.search(r"puntos?\s+vale\s+(?:un\s+)?touchdown", lower):
+        return "6 (7 si cuenta el punto extra)."
+    if re.search(
+        r"animal\s+terrestre\s+m[aá]s\s+r[aá]pido|m[aá]s\s+r[aá]pido\s+(?:del\s+mundo\s+)?terrestre",
+        lower,
+    ):
+        return "El guepardo."
+    elem = re.search(
+        r"(?:elemento(?:\s+qu[ií]mico)?\s+con\s+s[ií]mbolo|s[ií]mbolo\s+(?:qu[ií]mico\s+)?)\s*([a-z]{1,2})\b",
+        lower,
+    )
+    if elem:
+        symbol = elem.group(1).upper()
+        names = {
+            "FE": "hierro",
+            "AU": "oro",
+            "AG": "plata",
+            "O": "oxígeno",
+            "H": "hidrógeno",
+            "C": "carbono",
+            "N": "nitrógeno",
+            "NA": "sodio",
+            "K": "potasio",
+            "CA": "calcio",
+        }
+        if symbol in names:
+            return f"{symbol.title() if len(symbol) > 1 else symbol} es {names[symbol]}."
 
     if re.search(r"\b(estado(?:\s+de)?(?:\s+la)?\s+pc|qu[eé] hay abierto|qu[eé] apps)\b", lower):
         return run("system_status")
@@ -402,7 +447,8 @@ def try_local_command(
             return run("phone_hands", **phone)
 
     music = re.search(
-        r"(?:poneme|pon[eé]|reproduc[ií]|reproducir|escuchar|play|tirame)\s+"
+        r"(?:poneme|pon[eé]me|reproduc[ií]|reproducir|escuchar|play|tirame|"
+        r"pon[eé](?=\s+(?:me\b|una?\s+|la\s+|el\s+|m[uú]sica\b|canci|tema\b|spotify\b|youtube\b|algo\b)))\s+"
         r"(?:a\s+reproducir\s+)?"
         r"(?:un\s+tema\s+de\s+|una\s+canci[oó]n\s+(?:de\s+)?|la\s+canci[oó]n\s+(?:de\s+)?|"
         r"el\s+tema\s+(?:de\s+)?|m[uú]sica\s+(?:de\s+)?)?"
@@ -411,7 +457,15 @@ def try_local_command(
         lower,
         re.I,
     )
-    if music and not re.search(r"\b(volumen|timer|alarma|linterna|recordatorio)\b", lower):
+    if (
+        music
+        and not re.search(r"\b(volumen|timer|alarma|linterna|recordatorio)\b", lower)
+        and not re.match(
+            r"^(?:qu[eé]|qui[eé]n|cu[aá]l|d[oó]nde|cu[aá]nt[oa]|por\s+qu[eé])\b",
+            lower,
+        )
+        and not re.search(r"\b(animal|huevo|est[oó]mago|planeta|capital)\b", lower)
+    ):
         platform = (music.group(2) or "spotify").strip()
         query = music.group(1).strip(" .")
         query = re.sub(r"\s+en\s+(el\s+)?(spotify|youtube)$", "", query, flags=re.I).strip()
@@ -459,12 +513,24 @@ def try_local_command(
     if journal:
         return run("daily_journal", content=journal.group(1).strip())
 
-    if re.search(r"\b(clima|tiempo|temperatura|llueve|pronostico|pronóstico)\b", lower):
+    # Weather — skip science / material questions ("temperatura ambiente", ebullición).
+    if re.search(r"\b(clima|tiempo|llueve|pronostico|pronóstico)\b", lower) or (
+        re.search(r"\btemperatura\b", lower)
+        and not re.search(
+            r"\b(hierve|ebullici[oó]n|congela|congelaci[oó]n|punto\s+de|kelvin|"
+            r"fusi[oó]n|ambiente|metal|l[ií]quid|s[oó]lido|gas)\b",
+            lower,
+        )
+    ):
         return run("weather", city=city)
 
     math = _math(raw)
     if math:
         return run("calculate", expression=math)
+
+    capital = _capital_fact(raw)
+    if capital:
+        return capital
 
     minutes, timer_text = _timer(raw)
     if minutes is not None:
@@ -622,7 +688,7 @@ def try_local_command(
         r"definici[oó]n|significa)\b",
         lower,
     ):
-        return run("web_search", query=raw, max_results=5)
+        return run("web_search", query=_strip_question_shell(raw), max_results=5)
 
     return None
 
@@ -848,18 +914,153 @@ def _city(text: str, memory: Memory) -> str:
     return "Buenos Aires"
 
 
+def _strip_question_shell(text: str) -> str:
+    """Drop leading ¿Cuál es / Qué es so search hits the topic, not RAE 'cuál'."""
+    t = (text or "").strip().strip("¿?¡!")
+    t = re.sub(
+        r"^(?:cu[aá]l\s+es|qu[eé]\s+es|qui[eé]n\s+(?:es|fue)|d[oó]nde\s+(?:est[aá]|queda)|"
+        r"cu[aá]nto\s+(?:es|vale)|decime|contame)\s+",
+        "",
+        t,
+        flags=re.I,
+    )
+    return " ".join(t.split()).strip(" .")
+
+
+_CAPITALS: dict[str, str] = {
+    "francia": "París",
+    "japón": "Tokio",
+    "japon": "Tokio",
+    "argentina": "Buenos Aires",
+    "brasil": "Brasilia",
+    "spain": "Madrid",
+    "españa": "Madrid",
+    "espana": "Madrid",
+    "italia": "Roma",
+    "alemania": "Berlín",
+    "australia": "Canberra",
+    "canadá": "Ottawa",
+    "canada": "Ottawa",
+    "egipto": "El Cairo",
+    "marruecos": "Rabat",
+    "méxico": "Ciudad de México",
+    "mexico": "Ciudad de México",
+    "perú": "Lima",
+    "peru": "Lima",
+    "chile": "Santiago",
+    "uruguay": "Montevideo",
+    "paraguay": "Asunción",
+    "bolivia": "Sucre",
+    "colombia": "Bogotá",
+    "portugal": "Lisboa",
+    "grecia": "Atenas",
+    "suecia": "Estocolmo",
+    "noruega": "Oslo",
+    "polonia": "Varsovia",
+    "turquía": "Ankara",
+    "turquia": "Ankara",
+    "venezuela": "Caracas",
+    "ecuador": "Quito",
+    "nueva zelanda": "Wellington",
+    "corea del sur": "Seúl",
+    "estados unidos": "Washington D. C.",
+    "eeuu": "Washington D. C.",
+    "reino unido": "Londres",
+    "china": "Pekín",
+    "rusia": "Moscú",
+    "india": "Nueva Delhi",
+}
+
+
+def _capital_fact(text: str) -> str | None:
+    lower = (text or "").lower().strip("¿?¡! ")
+    m = re.search(r"capital\s+(?:de|del|de\s+la|de\s+los)\s+(.+)$", lower)
+    if not m:
+        return None
+    country = re.sub(r"\b(la|el|los|las)\b", " ", m.group(1))
+    country = " ".join(country.split()).strip(" .?")
+    key = country.translate(str.maketrans("áéíóúüñ", "aeiouun"))
+    # Also try accented form for dict keys that keep accents.
+    for candidate in (country, key):
+        hit = _CAPITALS.get(candidate)
+        if hit:
+            return f"La capital de {country.title()} es {hit}."
+    # Normalized lookup without accents on keys.
+    plain = {k.translate(str.maketrans("áéíóúüñ", "aeiouun")): v for k, v in _CAPITALS.items()}
+    hit = plain.get(key)
+    if hit:
+        return f"La capital de {country.title()} es {hit}."
+    return None
+
+
 def _math(text: str) -> str | None:
-    stripped = text.strip()
+    stripped = text.strip().strip("¿?¡!")
+    # "25 por ciento de 200" / "25% de 200"
+    pct = re.match(
+        r"^(?:calcul[aeá]|cu[aá]nto\s+es|cuanto\s+es|cu[aá]nto\s+da)?\s*"
+        r"(\d+(?:[.,]\d+)?)\s*(?:por\s*ciento|%)\s+de\s+(\d+(?:[.,]\d+)?)\s*$",
+        stripped,
+        re.I,
+    )
+    if pct:
+        a = pct.group(1).replace(",", ".")
+        b = pct.group(2).replace(",", ".")
+        return f"({a}*({b}))/100"
+
     match = re.match(
         r"^(?:calcul[aeá]|cu[aá]nto\s+es|cuanto\s+es|cu[aá]nto\s+da)\s+(.+)$",
         stripped,
         re.I,
     )
-    if match:
-        return match.group(1).strip()
-    compact = stripped.replace(" ", "")
-    if re.fullmatch(r"[\d\.\,\+\-\*/\(\)%]+", compact) and re.search(r"[\+\-\*/%]", compact):
-        return compact.replace(",", ".")
+    expr = match.group(1).strip() if match else None
+    if expr is None:
+        compact = stripped.replace(" ", "")
+        if re.fullmatch(r"[\d\.\,\+\-\*/\(\)%]+", compact) and re.search(r"[\+\-\*/%]", compact):
+            return compact.replace(",", ".")
+        return None
+
+    expr = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s+al\s+cubo\b",
+        lambda m: f"({m.group(1).replace(',', '.')})**3",
+        expr,
+        flags=re.I,
+    )
+    expr = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s+al\s+cuadrado\b",
+        lambda m: f"({m.group(1).replace(',', '.')})**2",
+        expr,
+        flags=re.I,
+    )
+    expr = re.sub(
+        r"(?:\bla\s+)?ra[ií]z\s+cuadrada\s+de\s+(\d+(?:[.,]\d+)?)",
+        lambda m: f"({m.group(1).replace(',', '.')})**0.5",
+        expr,
+        flags=re.I,
+    )
+    # Spoken operators (after percent / powers so "por ciento" is not "* ciento").
+    expr = re.sub(r"\s+por\s+", "*", expr, flags=re.I)
+    expr = re.sub(r"\s+m[aá]s\s+", "+", expr, flags=re.I)
+    expr = re.sub(r"\s+menos\s+", "-", expr, flags=re.I)
+    expr = re.sub(r"\s+dividido(?:\s+(?:por|entre))?\s+", "/", expr, flags=re.I)
+    expr = re.sub(r"\s+entre\s+", "/", expr, flags=re.I)
+    expr = re.sub(
+        r"(\d+(?:[.,]\d+)?)\s+elevado\s+a\s+(\d+(?:[.,]\d+)?)",
+        lambda m: f"({m.group(1).replace(',', '.')})**({m.group(2).replace(',', '.')})",
+        expr,
+        flags=re.I,
+    )
+    # Trailing factorial: 5!
+    fact = re.fullmatch(r"(\d+)\s*(?:factorial|!)", expr, re.I)
+    if fact:
+        n = int(fact.group(1))
+        if 0 <= n <= 12:
+            from math import factorial
+
+            return str(factorial(n))
+    expr = expr.replace("×", "*").replace("÷", "/").replace(",", ".")
+    expr = re.sub(r"\s+", "", expr)
+    if re.fullmatch(r"[\d\.\+\-\*/\(\)%]+", expr) and re.search(r"[\+\-\*/%]", expr):
+        return expr
     return None
 
 

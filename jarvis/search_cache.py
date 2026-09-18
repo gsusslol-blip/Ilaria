@@ -35,7 +35,8 @@ def _normalize_query(text: str) -> str:
     # Keep temporal/price cues (hoy/ahora) so cache does not serve stale facts.
     raw = re.sub(
         r"\b(por favor|please|decime|contame|buscar?|busca|google(?:a[rd]?)?|"
-        r"como se hace|como hacer|receta de|receta)\b",
+        r"como se hace|como hacer|receta de|receta|"
+        r"cual es|que es|quien es|quien fue|donde esta|donde queda)\b",
         " ",
         raw,
     )

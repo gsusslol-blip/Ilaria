@@ -126,6 +126,8 @@ class Settings:
     # Relative onnx filename under data/tts when provider=piper (per-user voice).
     piper_model_name: str = ""
     voice_id: str = "ilaria"
+    tts_rate: str = "+0%"
+    tts_pitch: str = "+0Hz"
 
     @property
     def has_llm(self) -> bool:

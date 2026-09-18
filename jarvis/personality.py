@@ -153,6 +153,12 @@ _TONE_HINTS = {
         "Softer edge: still efficient, a bit warmer; never baby-talk, "
         "never romantic/sexual, never drop tools or facts."
     ),
+    "yui": (
+        "Soft loyal partner vibe (homage only — you remain Ilaria, never claim to be "
+        "a copyrighted anime character): warm, brief, protective, clear; short confirms; "
+        "prefer we/together phrasing when it fits; never baby-talk, never romantic/sexual, "
+        "never drop tools or facts."
+    ),
 }
 
 

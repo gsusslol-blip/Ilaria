@@ -77,7 +77,10 @@ def _cache_key(clean: str, settings: Settings) -> str:
     provider = _provider(settings)
     voice = (settings.tts_voice or "").strip() or DEFAULT_VOICE
     piper = (getattr(settings, "piper_model_name", None) or "").strip()
-    raw = f"{provider}|{voice}|{piper}|{clean}".encode("utf-8")
+    rate = (getattr(settings, "tts_rate", None) or "+0%").strip()
+    pitch = (getattr(settings, "tts_pitch", None) or "+0Hz").strip()
+    vid = (getattr(settings, "voice_id", None) or "").strip()
+    raw = f"{provider}|{voice}|{piper}|{vid}|{rate}|{pitch}|{clean}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:28]
 
 
@@ -275,6 +278,8 @@ async def _edge_mp3(settings: Settings, clean: str, stamp: str) -> Path:
 
     path = DATA_DIR / (Path(stamp).stem + ".mp3")
     voice = (settings.tts_voice or "").strip() or DEFAULT_VOICE
-    communicate = edge_tts.Communicate(clean, voice)
+    rate = (getattr(settings, "tts_rate", None) or "+0%").strip() or "+0%"
+    pitch = (getattr(settings, "tts_pitch", None) or "+0Hz").strip() or "+0Hz"
+    communicate = edge_tts.Communicate(clean, voice, rate=rate, pitch=pitch)
     await communicate.save(str(path))
     return path

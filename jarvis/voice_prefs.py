@@ -17,6 +17,10 @@ _DEFAULTS = {
     "stt_language": "es",
 }
 
+# Whisper / STT language codes accepted in Settings.
+STT_LANGUAGES = frozenset({"", "es", "en", "it", "pt", "fr", "de", "auto"})
+WHISPER_MODELS = frozenset({"", "tiny", "base", "small", "medium"})
+
 
 def prefs_path() -> Path:
     return _PATH
@@ -52,29 +56,40 @@ def save_voice_prefs(patch: dict[str, Any]) -> dict[str, Any]:
             pass
     if "faster_whisper_model" in patch:
         model = str(patch["faster_whisper_model"] or "").strip().lower()
-        if model in {"", "tiny", "base", "small", "medium"}:
+        if model in WHISPER_MODELS:
             current["faster_whisper_model"] = model
     if "stt_language" in patch:
         lang = str(patch["stt_language"] or "").strip().lower()
-        if lang in {"", "es", "en", "auto"}:
+        if lang in STT_LANGUAGES:
             current["stt_language"] = lang or "es"
     _PATH.parent.mkdir(parents=True, exist_ok=True)
     _PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    # Reflect into process env so wake/whisper pick up without restart when possible.
-    os.environ["WAKE_SENSITIVITY"] = str(current["wake_sensitivity"])
-    os.environ["WAKE_MIC_INDEX"] = str(current["wake_mic_index"])
-    if current.get("faster_whisper_model"):
-        os.environ["FASTER_WHISPER_MODEL"] = str(current["faster_whisper_model"])
-    if current.get("stt_language"):
-        os.environ["STT_LANGUAGE"] = str(current["stt_language"])
+    _apply_env(current, overwrite=True)
     return current
 
 
+def _apply_env(prefs: dict[str, Any], *, overwrite: bool) -> None:
+    """Push prefs into process env. overwrite=True clears stale keys on save."""
+    set_fn = os.environ.__setitem__ if overwrite else os.environ.setdefault
+    set_fn("WAKE_SENSITIVITY", str(prefs["wake_sensitivity"]))
+    set_fn("WAKE_MIC_INDEX", str(prefs["wake_mic_index"]))
+    model = str(prefs.get("faster_whisper_model") or "").strip()
+    lang = str(prefs.get("stt_language") or "").strip()
+    if overwrite:
+        if model:
+            os.environ["FASTER_WHISPER_MODEL"] = model
+        else:
+            os.environ.pop("FASTER_WHISPER_MODEL", None)
+        if lang:
+            os.environ["STT_LANGUAGE"] = lang
+        else:
+            os.environ.pop("STT_LANGUAGE", None)
+    else:
+        if model:
+            os.environ.setdefault("FASTER_WHISPER_MODEL", model)
+        if lang:
+            os.environ.setdefault("STT_LANGUAGE", lang)
+
+
 def apply_voice_prefs_to_env() -> None:
-    prefs = load_voice_prefs()
-    os.environ.setdefault("WAKE_SENSITIVITY", str(prefs["wake_sensitivity"]))
-    os.environ.setdefault("WAKE_MIC_INDEX", str(prefs["wake_mic_index"]))
-    if prefs.get("faster_whisper_model"):
-        os.environ.setdefault("FASTER_WHISPER_MODEL", str(prefs["faster_whisper_model"]))
-    if prefs.get("stt_language"):
-        os.environ.setdefault("STT_LANGUAGE", str(prefs["stt_language"]))
+    _apply_env(load_voice_prefs(), overwrite=False)

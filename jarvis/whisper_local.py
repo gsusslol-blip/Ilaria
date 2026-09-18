@@ -103,6 +103,15 @@ def transcribe_local(settings: Settings, data: bytes, filename: str) -> str:
             forced = None
         elif not forced:
             forced = "es"
+        prompts = {
+            "es": "Ilaria, español rioplatense, comandos cortos.",
+            "en": "Ilaria assistant, short English voice commands.",
+            "it": "Ilaria, assistente vocale, comandi brevi in italiano.",
+            "pt": "Ilaria, comandos de voz curtos em português.",
+            "fr": "Ilaria, commandes vocales courtes en français.",
+            "de": "Ilaria, kurze Sprachbefehle auf Deutsch.",
+        }
+        initial = prompts.get(forced or "", prompts["es"])
         segments, info = model.transcribe(
             path,
             beam_size=1,
@@ -116,7 +125,7 @@ def transcribe_local(settings: Settings, data: bytes, filename: str) -> str:
             condition_on_previous_text=False,
             without_timestamps=True,
             temperature=0.0,
-            initial_prompt="Ilaria, español rioplatense, comandos cortos.",
+            initial_prompt=initial,
         )
         text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
         lang = getattr(info, "language", None) or forced or "es"

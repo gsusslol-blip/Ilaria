@@ -575,6 +575,8 @@ def create_hud(state: AppState) -> FastAPI:
             tts_voice=runtime["tts_voice"],
             piper_model_name=runtime.get("piper_model") or "",
             voice_id=voice_id,
+            tts_rate=runtime.get("edge_rate") or "+0%",
+            tts_pitch=runtime.get("edge_pitch") or "+0Hz",
         )
         line = preview_line(voice_id)
         try:
@@ -1006,8 +1008,8 @@ def create_hud(state: AppState) -> FastAPI:
 
         patch = payload.model_dump(exclude_none=True)
         prefs = save_voice_prefs(patch)
-        # Force Whisper reload on next STT if model changed.
-        if "faster_whisper_model" in patch:
+        # Force Whisper reload on next STT if model or language changed.
+        if "faster_whisper_model" in patch or "stt_language" in patch:
             whisper_local.reset_model()
         return {"ok": True, "prefs": prefs}
 

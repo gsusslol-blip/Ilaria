@@ -550,6 +550,8 @@ def _search_relevance(query: str, rows: list[dict[str, Any]]) -> float:
     stop = {
         "que",
         "qué",
+        "cual",
+        "cuál",
         "como",
         "cómo",
         "para",
@@ -567,6 +569,14 @@ def _search_relevance(query: str, rows: list[dict[str, Any]]) -> float:
         "desde",
         "hasta",
         "sobre",
+        "quien",
+        "quién",
+        "donde",
+        "dónde",
+        "cuando",
+        "cuándo",
+        "cuanto",
+        "cuánto",
         "http",
         "https",
         "www",
@@ -581,11 +591,24 @@ def _search_relevance(query: str, rows: list[dict[str, Any]]) -> float:
     return hits / max(len(keys), 1)
 
 
+def _clean_search_query(query: str) -> str:
+    """Strip question wrappers so Bing does not match RAE 'cuál'."""
+    t = " ".join((query or "").split()).strip().strip("¿?¡!")
+    t = re.sub(
+        r"^(?:cu[aá]l\s+es|qu[eé]\s+es|qui[eé]n\s+(?:es|fue)|d[oó]nde\s+(?:est[aá]|queda)|"
+        r"cu[aá]nto\s+(?:es|vale)|decime|contame)\s+",
+        "",
+        t,
+        flags=re.I,
+    )
+    return " ".join(t.split()).strip(" .") or (query or "").strip()
+
+
 def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) -> str:
     """Bing-first live search (fast); Yahoo/DDG fallback if relevance is poor."""
     from jarvis.search_cache import format_hit, lookup, store
 
-    q = " ".join((query or "").split())
+    q = _clean_search_query(" ".join((query or "").split()))
     if not q:
         return "Empty query."
     cached = lookup(q, workspace, kind="web")

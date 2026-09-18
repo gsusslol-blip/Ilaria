@@ -98,6 +98,7 @@
           <label for="custom_tone">Tono de personalidad</label>
           <select id="custom_tone" name="custom_tone">
             <option value="tierno">Tierno — dulce e inocente</option>
+            <option value="yui">Yui — compañera suave (estilo partner AI)</option>
             <option value="equilibrado">Equilibrado — mayordomo elegante</option>
             <option value="seco">Sarcástico / seco — ironía fina</option>
             <option value="ejecutivo">Técnico / estricto — al grano</option>
@@ -144,9 +145,13 @@
           <div>
             <label for="stt_language">Idioma STT</label>
             <select id="stt_language" name="stt_language">
-              <option value="es">es</option>
-              <option value="en">en</option>
-              <option value="auto">auto</option>
+              <option value="es">es — español</option>
+              <option value="en">en — English</option>
+              <option value="it">it — italiano</option>
+              <option value="pt">pt — português</option>
+              <option value="fr">fr — français</option>
+              <option value="de">de — Deutsch</option>
+              <option value="auto">auto — detectar</option>
             </select>
           </div>
         </div>
@@ -218,7 +223,7 @@
         form.address_as.value = u.address_as || u.display_name || "";
         form.city.value = u.city || "";
         const tone = u.custom_tone || "equilibrado";
-        form.custom_tone.value = ["tierno", "equilibrado", "seco", "ejecutivo", "serio", "calido"].includes(tone)
+        form.custom_tone.value = ["tierno", "yui", "equilibrado", "seco", "ejecutivo", "serio", "calido"].includes(tone)
           ? tone
           : "tierno";
         const voiceSel = form.tts_voice;
