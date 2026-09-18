@@ -17,8 +17,11 @@ Español rioplatense en chat; comentarios de código en inglés. Commits solo si
 ## Audio (2026-09)
 - HUD graba PCM→WAV 16 kHz (no webm) + VAD float; Mute libera el mic.
 - Libre pausa Porcupine vía `POST /api/wake/hud-listening`.
-- Preferencias owner: `/api/voice-prefs` + Settings (sensibilidad wake, mic index, Whisper size).
-- Wake reusa un solo PvRecorder; `WAKE_SENSITIVITY` / `WAKE_MIC_INDEX`.
+- Preferencias owner: `/api/voice-prefs` + Settings (sensibilidad wake, mic index, Whisper size, STT `es|en|it|…|auto`).
+- Voces: Piper/Edge + **Yui** (tono+pitch) + Elsa/Diego IT. Settings → Voz / Tono.
+- Search hablable: `jarvis/search_speak.py` limpia dumps Bing/Yahoo a 1 oración (sin LLM extra).
+- GK fijas: `jarvis/gk_fixes.py` (+ overlay opcional `data/gk_fixes.json`).
+- Wake reusa un solo PvRecorder; sin PicoVoice → botón Libre / Tap-to-Talk.
 - Android: early_audio + barge-in; iOS: WakeListen SFSpeech (botón Mic).
 
 # Personalidad filial dulce (owner=papá); packs NO pisan identidad; Ollama gemma2:2b + Whisper CPU

@@ -213,6 +213,15 @@ class Brain:
 
     def _finish(self, text: str) -> str:
         clean = redact_secrets(text or "", extra=secret_values(self.settings))
+        try:
+            from jarvis.search_speak import looks_like_search_dump, speakable_from_search
+
+            if looks_like_search_dump(clean):
+                spoken = speakable_from_search(clean, max_words=40)
+                if spoken:
+                    clean = spoken
+        except Exception:  # noqa: BLE001
+            pass
         return guard_filial_reply(
             clean,
             is_owner=self.is_owner,
@@ -410,6 +419,11 @@ class Brain:
                     json.dumps({"query": text[:180], "max_results": 5}, ensure_ascii=False),
                 )
                 if hit and "error" not in hit.lower()[:40] and not hit.startswith("No results"):
+                    from jarvis.search_speak import speakable_from_search
+
+                    spoken = speakable_from_search(hit, text, max_words=40)
+                    if spoken:
+                        return spoken
                     return (
                         "Busqué esto por vos:\n"
                         f"{hit[:1200]}\n"
@@ -730,7 +744,7 @@ class Brain:
         # Small locals often ignore tools; still try a tool loop so PC actions can fire.
         if small:
             max_tokens = SMALL_MAX_TOKENS
-            temperature = SMALL_TEMPERATURE
+            temperature = 0.0 if factish else SMALL_TEMPERATURE
             tool_rounds = ACTION_TOOL_ROUNDS
         elif actionish:
             max_tokens = ACTION_MAX_TOKENS
@@ -738,7 +752,7 @@ class Brain:
             tool_rounds = MAX_TOOL_ROUNDS if manageish else ACTION_TOOL_ROUNDS
         elif factish:
             max_tokens = ACTION_MAX_TOKENS
-            temperature = REASONING_TEMPERATURE
+            temperature = 0.0  # facts: no creative science
             tool_rounds = MAX_TOOL_ROUNDS if manageish else 2  # search → answer
         elif opinionish:
             # Opinions must not touch tools (avoids Groq tool_use_failed 400).
@@ -910,10 +924,21 @@ class Brain:
 
                 for call, result in _execute_tools_parallel(self.execute, tool_calls):
                     executed_actions.append((call.function.name, result))
+                    content = result[:12000]
+                    if call.function.name in {"web_search", "wikipedia"}:
+                        from jarvis.search_speak import speakable_from_search
+
+                        spoken = speakable_from_search(result, text, max_words=42)
+                        if spoken:
+                            # Keep a tiny raw tail for the synth LLM if needed.
+                            content = (
+                                f"Respuesta hablable: {spoken}\n"
+                                f"(Contexto breve)\n{result[:900]}"
+                            )[:12000]
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": result[:12000],
+                        "content": content,
                     }
                     messages.append(tool_msg)
                     history.append(tool_msg)
@@ -946,6 +971,9 @@ class Brain:
                         return
                 # Fact/research: one tool round is enough → synthesize.
                 if factish and executed_actions:
+                    from jarvis.search_speak import SEARCH_SPEAK_INSTRUCTION
+
+                    messages.append({"role": "system", "content": SEARCH_SPEAK_INSTRUCTION})
                     break
 
             # After pure execute tools, speak the confirm — no second LLM essay.

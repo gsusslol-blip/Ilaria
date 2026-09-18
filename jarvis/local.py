@@ -39,6 +39,10 @@ def try_local_command(
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
 
+    fixed = _gk_fix(raw)
+    if fixed:
+        return fixed
+
     # Clock / date only — do not match "cuántos minutos tiene una hora".
     if re.fullmatch(
         r"(?:qu[eé]\s+hora\s+es(?:\s+por\s+favor)?|hora(?:\s+actual)?|fecha(?:\s+de\s+hoy)?|"
@@ -902,6 +906,12 @@ def _open_target(target: str, run: Callable[..., str], *, android: bool) -> str 
     if android:
         return run("phone_hands", action="open_app", target=target)
     return run("open_app", name=key)
+
+
+def _gk_fix(text: str) -> str | None:
+    from jarvis.gk_fixes import lookup_gk_fix
+
+    return lookup_gk_fix(text)
 
 
 def _city(text: str, memory: Memory) -> str:
