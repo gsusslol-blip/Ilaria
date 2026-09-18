@@ -271,8 +271,15 @@ class Actions:
 
         url = _search_url(plat, q)
         launched = _launch_url(url, browser=brow)
-        label = "YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title()
-        return f"{launched} · {label}: {q}"
+        label = (
+            "Imágenes"
+            if plat in {"images", "image", "imagenes", "imágenes", "ilustracion", "ilustración", "fotos", "google_images", "bing_images"}
+            else ("YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title())
+        )
+        # Alexa-style: confirm action, never speak the raw URL.
+        if "URL inválida" in launched or "no encontré" in launched.lower():
+            return launched
+        return f"Listo, abrí {label} con {q}."
 
     def google(self, query: str) -> str:
         return self.app_search_action(browser="brave", platform="google", query=query)
@@ -319,7 +326,7 @@ class Actions:
             if sys.platform == "win32" and key == "spotify":
                 try:
                     os.startfile("spotify:")  # type: ignore[attr-defined]
-                    return "Opened spotify."
+                    return "Listo, abrí Spotify."
                 except OSError:
                     pass
             if sys.platform == "win32" and not os.path.isabs(paths[0]):
@@ -813,6 +820,10 @@ def _search_url(platform: str, query: str) -> str:
     q = quote(query.strip())
     if plat in {"google", "web", "buscar"}:
         return "https://www.google.com/search?q=" + q
+    if plat in {"images", "image", "imagenes", "imágenes", "ilustracion", "ilustración", "fotos", "google_images"}:
+        return "https://www.google.com/search?tbm=isch&q=" + q
+    if plat in {"bing_images", "bingimagenes"}:
+        return "https://www.bing.com/images/search?q=" + q
     if plat in {"ytmusic", "youtube music", "youtubemusic"}:
         return "https://music.youtube.com/search?q=" + q
     if "spotify" in plat:
@@ -868,7 +879,7 @@ def _launch_url(url: str, *, browser: str = "") -> str:
                 creationflags=_CREATE_NO_WINDOW,
             )
             label = Path(exe).stem
-            return f"Abrí {label} → {url}"
+            return f"Listo, abrí {label}."
         except OSError:
             pass
     if sys.platform == "win32" and (browser or "").strip().lower() in {"brave", "chrome", "edge", ""}:
@@ -880,11 +891,11 @@ def _launch_url(url: str, *, browser: str = "") -> str:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            return f"Abrí {cmd} → {url}"
+            return f"Listo, abrí {cmd}."
         except OSError:
             pass
     webbrowser.open(url)
-    return f"Abrí el navegador → {url}"
+    return "Listo, abrí el navegador."
 
 
 _WATCH_PROCS = {
@@ -972,8 +983,9 @@ def _start(target: str, label: str) -> str:
     try:
         os.startfile(target)  # type: ignore[attr-defined]
     except OSError as exc:
-        return f"Could not open {label}: {exc}"
-    return f"Opened {label}."
+        return f"No pude abrir {label}: {exc}"
+    pretty = (label or "la app").strip() or "la app"
+    return f"Listo, abrí {pretty}."
 
 
 def _clipboard_unicode_text() -> str | None:

@@ -106,6 +106,19 @@ def match_fast_path(
     ):
         return "kitchen_recipe", {"action": "listar", "dish": ""}, "kitchen_list"
 
+    m = re.fullmatch(
+        r"(?:busc[aá]|busca[r]?|mostr[aá]|dame)\s+(?:una?\s+)?"
+        r"(?:ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|diagrama(?:s)?)\s+"
+        r"(?:de\s+|del?\s+|sobre\s+)?(.+)",
+        lower,
+    )
+    if m:
+        topic = m.group(1).strip(" .")
+        if 1 < len(topic) <= 120:
+            if _phone(surf):
+                return "phone_hands", {"action": "search", "target": f"{topic} ilustración"}, "image_phone"
+            return "image_search", {"query": topic, "max_results": 5, "open_browser": True}, "image_search"
+
     if re.fullmatch(
         r"(?:le[eé]r?\s+(?:el\s+)?reloj|reloj|smartwatch|m[eé]tricas(?:\s+del\s+reloj)?|"
         r"c[oó]mo\s+estoy(?:\s+de\s+energ[ií]a)?|pasos\s+de\s+hoy|hrv|"
@@ -174,32 +187,37 @@ def match_fast_path(
             return "phone_hands", {"action": "screenshot"}, "screenshot"
         return "screenshot", {}, "screenshot"
 
-    # Deep-link: "abrí brave y poné youtube una canción de yzy"
+    # Deep-link music / YouTube — always open the browser, never paste a link.
     if not _phone(surf):
+        # "abrí brave y poné youtube …" / "abrí brave youtube …" / "abrime youtube …"
         m = re.search(
-            r"(?:abr[ií]|abra|abrir)\s+(brave|chrome|edge|chromium)\s+"
-            r"(?:y\s+)?(?:pon(?:eme|[eé])?|ponga|busc[aá]r?|reproduc[ií])\s+"
-            r"(?:en\s+)?(youtube|yt|ytmusic|google|spotify)\s+"
-            r"(?:una\s+canci[oó]n\s+(?:de\s+)?|algo\s+(?:de\s+)?|a\s+|de\s+)?"
+            r"(?:abr[ií]|abra|abrir|abrime)\s+"
+            r"(?:(brave|chrome|edge|chromium)\s+)?"
+            r"(?:y\s+|,\s*)?"
+            r"(?:abr[ií]|abra|abrir|abrime|pon(?:eme|[eé])?|ponga|busc[aá]r?|reproduc[ií]|play)?\s*"
+            r"(?:en\s+)?"
+            r"(youtube|yt|ytmusic|google|spotify)\s+"
+            r"(?:y\s+(?:pon(?:eme|[eé])?|busc[aá]r?|reproduc[ií])\s+)?"
+            r"(?:una\s+canci[oó]n\s+(?:de\s+)?|un\s+tema\s+(?:de\s+)?|algo\s+(?:de\s+)?|"
+            r"a\s+|de\s+|el\s+video\s+(?:de\s+)?)?"
             r"(.+)$",
             lower,
         )
         if m:
+            browser = (m.group(1) or "brave").strip()
+            platform = m.group(2).strip()
             query = m.group(3).strip(" .")
-            if 1 < len(query) <= 80:
+            query = re.sub(r"^(una\s+canci[oó]n\s+(?:de\s+)?|de\s+)", "", query).strip()
+            if 1 < len(query) <= 100:
                 return (
                     "app_search_action",
-                    {
-                        "browser": m.group(1),
-                        "platform": m.group(2),
-                        "query": query,
-                    },
+                    {"browser": browser, "platform": platform, "query": query},
                     "app_search_open",
                 )
 
-        # "poné / buscá en youtube|spotify …"
+        # "poné / buscá en youtube|spotify …" / "poneme en youtube X"
         m = re.fullmatch(
-            r"(?:pon(?:eme|[eé])?|ponga|reproduc[ií]|play|busc[aá]r?)\s+"
+            r"(?:pon(?:eme|[eé])?|ponga|reproduc[ií]|play|busc[aá]r?|tirame)\s+"
             r"(?:en\s+)?(youtube|yt|ytmusic|spotify)\s+"
             r"(?:una\s+canci[oó]n\s+(?:de\s+)?|algo\s+(?:de\s+)?|a\s+|de\s+)?"
             r"(.+)",
@@ -207,7 +225,7 @@ def match_fast_path(
         )
         if m:
             query = m.group(2).strip(" .")
-            if 1 < len(query) <= 80:
+            if 1 < len(query) <= 100:
                 return (
                     "app_search_action",
                     {
@@ -218,14 +236,16 @@ def match_fast_path(
                     "app_search_music",
                 )
 
-        # "youtube: artist" / "canción de X en youtube"
+        # "youtube X" / "canción de X en youtube"
         m = re.fullmatch(
             r"(?:canci[oó]n\s+de\s+|tema\s+de\s+)?(.+?)\s+en\s+(youtube|yt|spotify)",
             lower,
         )
         if m:
             query = m.group(1).strip(" .")
-            if 1 < len(query) <= 80 and not re.search(r"\b(qu[eé]|por\s+qu[eé]|pens[aá])\b", query):
+            if 1 < len(query) <= 100 and not re.search(
+                r"\b(qu[eé]|por\s+qu[eé]|pens[aá]|explic)\b", query
+            ):
                 return (
                     "app_search_action",
                     {
@@ -235,6 +255,60 @@ def match_fast_path(
                     },
                     "app_search_en",
                 )
+
+        # "poneme / tirame [una canción de] Artist" (no platform → YouTube Brave)
+        m = re.fullmatch(
+            r"(?:pon(?:eme|[eé])?|tirame|reproduc[ií]|play)\s+"
+            r"(?:una?\s+)?(?:canci[oó]n|tema|video|track)\s+"
+            r"(?:de\s+|del?\s+)?"
+            r"(.+)",
+            lower,
+        )
+        if m:
+            query = m.group(1).strip(" .")
+            if 1 < len(query) <= 100 and not re.search(
+                r"\b(volumen|timer|nota|diario|brave|chrome)\b", query
+            ):
+                return (
+                    "app_search_action",
+                    {"browser": "brave", "platform": "youtube", "query": query},
+                    "app_search_song",
+                )
+
+        # Generic: "abrí / ejecutá / lanzá <programa>" — always open, never describe.
+        m = re.fullmatch(
+            r"(?:abr[ií]|abrime|abrir|abre|open|lanz[aá]|ejecut[aá]|corré|corre|inici[aá]|run)\s+"
+            r"(?:la\s+|el\s+|app\s+(?:de\s+)?|aplicación\s+(?:de\s+)?|programa\s+(?:de\s+)?)?"
+            r"(.+)",
+            lower,
+        )
+        if m:
+            target = m.group(1).strip(" .")
+            # Bare media apps → open the app itself (not a search).
+            bare_media = re.fullmatch(
+                r"(brave|chrome|edge|chromium|youtube|yt|ytmusic|spotify|discord|"
+                r"steam|telegram|whatsapp|notepad|calculadora|excel|word|cursor|"
+                r"vlc|obs|code|vscode)",
+                target,
+            )
+            if bare_media:
+                name = {"yt": "youtube", "ytmusic": "youtube", "chromium": "chrome"}.get(
+                    bare_media.group(1), bare_media.group(1)
+                )
+                return "open_app", {"name": name}, "open_app"
+            # Music+browser combos with a query already handled above.
+            if (
+                1 < len(target) <= 80
+                and not re.search(r"\b(youtube|ytmusic|spotify)\b", target)
+                and not re.search(r"\b(canci[oó]n|tema|video|ilustraci|imagen|foto)\b", target)
+                and not re.search(r"\b(intercomunicador|portero|timbre|mapa|ruta)\b", target)
+            ):
+                # "brave y chrome" → first app; strip polite junk
+                target = re.sub(r"\s+(por favor|please)$", "", target).strip()
+                name = target.split(",")[0].strip()
+                name = re.split(r"\s+y\s+", name)[0].strip()
+                if name:
+                    return "open_app", {"name": name}, "open_app"
 
     return None
 

@@ -47,12 +47,18 @@ SMALL_MAX_TOKENS = 220
 SMALL_TEMPERATURE = 0.35
 
 _ACTION_HINT = (
-    r"\b(abr[ií]|abrime|abrir|abre|open|lanz[aá]|ejecut[aá]|cerr[aá]|volumen|volume|silenci|"
+    r"\b(abr[ií]|abrime|abrir|abre|open|lanz[aá]|ejecut[aá]|corré|corre|inici[aá]|run|"
+    r"cerr[aá]|volumen|volume|silenci|"
     r"mute|unmute|captura|screenshot|poneme|pon[eé]|reproduc|paus[aá]|busc[aá]|google|anot[aá]|nota|"
     r"deshac|undo|timer|record[aá]|avis[aá]|whatsapp|mapa|ruta|traduc|llevame|ll[eé]vame|naveg|"
-    r"intercomunicador|portero|timbre|doorbell|"
+    r"intercomunicador|portero|timbre|doorbell|programa|aplicaci[oó]n|"
     r"portapapeles|clipboard|apag[aá]\s+la\s+pc|reinici[aá]\s+la\s+pc|bloque[aá]|"
     r"sub[ií].{0,12}volumen|baj[aá].{0,12}volumen|siguiente|anterior|escritorio|descargas)\b"
+)
+_MANAGE_HINT = (
+    r"\b(gestion[aá]|organiz[aá]|armame|arm[aá]|planific[aá]|coordin[aá]|resolv[eé]|"
+    r"haceme\s+(?:el\s+)?favor|encargate|segu[ií]\s+con|termin[aá]\s+(?:de\s+)?|"
+    r"prepar[aá]|resum[ií]|orden[aá]|administr[aá]|manage|organize|handle)\b"
 )
 _FACT_HINT = (
     r"\b(qu[eé]\s+es|qui[eé]n\s+(?:es|fue|era)\b(?!\s+m[aá]s)|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|"
@@ -212,6 +218,90 @@ class Brain:
             is_owner=self.is_owner,
             address_as=self.settings.user_name,
         )
+
+    def _force_execute_command(self, text: str) -> str | None:
+        """When the user ordered open/run/play, execute via Fast-Path/local — never leave a link."""
+        from jarvis.fast_path import try_fast_path
+        from jarvis.local import try_local_command
+
+        surface = getattr(self.actions, "client_surface", "hud")
+        allowed = self.allowed_tools
+        hit = try_fast_path(text, self.execute, surface=surface, allowed=allowed)
+        if hit:
+            return hit
+        hit = try_local_command(
+            text,
+            self.execute,
+            self.memory,
+            self.settings,
+            allowed,
+            surface=surface,
+        )
+        if hit:
+            return hit
+        # Last resort: extract song/app after youtube/brave/open verbs.
+        lower = (text or "").lower()
+        m = re.search(
+            r"(?:youtube|yt|ytmusic)\s+(?:una\s+canci[oó]n\s+(?:de\s+)?|de\s+|a\s+)?(.+)$",
+            lower,
+        )
+        if m and "open_app" in (allowed or {"open_app"}):
+            query = m.group(1).strip(" .")
+            if 1 < len(query) <= 100:
+                return self.execute(
+                    "app_search_action",
+                    json.dumps(
+                        {"browser": "brave", "platform": "youtube", "query": query},
+                        ensure_ascii=False,
+                    ),
+                )
+        m = re.search(
+            r"(?:abr[ií]|abrime|abrir|ejecut[aá]|lanz[aá])\s+(?:la\s+|el\s+)?"
+            r"(brave|chrome|edge|spotify|discord|notepad|calculadora|excel|word|steam|cursor|telegram|whatsapp)\b",
+            lower,
+        )
+        if m:
+            name = m.group(1)
+            if allowed is None or "open_app" in allowed:
+                return self.execute("open_app", json.dumps({"name": name}, ensure_ascii=False))
+        return None
+
+    def _alexa_confirm(self, results: list[tuple[str, str]]) -> str | None:
+        """Short spoken confirm after an execute tool — Alexa-style, no URLs/essays."""
+        alexa_tools = {
+            "open_app",
+            "app_search_action",
+            "play_music",
+            "open_browser",
+            "google",
+            "set_volume",
+            "media",
+            "screenshot",
+            "open_maps",
+            "compose_whatsapp",
+            "intercom_action",
+            "phone_hands",
+            "control_device",
+            "note",
+            "daily_journal",
+            "undo_last",
+            "power_control",
+            "timer",
+            "queue_phone_fix",
+        }
+        for name, result in reversed(results):
+            if name not in alexa_tools:
+                continue
+            clean = re.sub(r"https?://\S+", "", result or "").strip(" ·.-→>")
+            clean = re.sub(r"\s*[→\-:]+\s*$", "", clean)
+            clean = re.sub(r"\s{2,}", " ", clean).strip()
+            if not clean:
+                continue
+            # Keep confirmations short (TTS-friendly).
+            if len(clean) > 160:
+                clean = clean[:157].rstrip() + "…"
+            return clean
+        return None
 
     @property
     def endpoint(self) -> LLMEndpoint:
@@ -512,6 +602,7 @@ class Brain:
 
         small = is_small_local_model(self.settings, self.endpoint.model)
         actionish = bool(re.search(_ACTION_HINT, text, re.I))
+        manageish = bool(re.search(_MANAGE_HINT, text, re.I))
         opinionish = bool(re.search(_OPINION_HINT, text, re.I))
         schoolish = bool(re.search(_SCHOOL_HINT, text, re.I))
         factish = (
@@ -520,6 +611,7 @@ class Brain:
             and (
                 bool(re.search(_FACT_HINT, text, re.I))
                 or schoolish
+                or manageish
                 or _looks_like_question(text)
             )
         )
@@ -561,9 +653,21 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "PRECISION: this turn is a concrete command. "
-                        "Call the matching tool now. After tool results, one short Rioplatense confirmation. "
-                        "Never claim success without a tool call in this turn."
+                        "ALEXA+GEMINI: execute EVERY concrete command with tools NOW "
+                        "(open_app, app_search_action, play_music, set_volume, …). "
+                        "If several asks in one turn, do them in order. "
+                        "Do it yourself — NEVER paste a URL / YouTube link / 'abrí vos'. "
+                        "After pure actions: short “Listo…”. "
+                        "If you also researched/managed, close with a clear Gemini-style summary."
+                        if manageish
+                        else (
+                            "ALEXA MODE: this turn is a concrete EXECUTE command. "
+                            "Call the matching tool NOW (open_app, app_search_action, play_music, "
+                            "set_volume, open_browser, phone_hands, …). "
+                            "Do it yourself — NEVER paste a URL / YouTube link / 'abrí vos'. "
+                            "After tools: one short Rioplatense confirmation only (Listo…). "
+                            "Never claim success without a tool call in this turn."
+                        )
                     ),
                 },
             )
@@ -573,18 +677,25 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "RESEARCH / HELP: this is a question, homework, explanation, or public fact. "
-                        "If you are not certain, call web_search or wikipedia NOW. "
-                        "For school help: explain step-by-step in clear Rioplatense, give a short example, "
-                        "then offer a practice question. Never invent citations. "
-                        "Never say you don't know without searching first when the topic is public."
-                        if schoolish
+                        "GEMINI MANAGE: the user wants you to organize / handle / plan something. "
+                        "Use tools as needed (search, notes, maps, apps). Resolve in order. "
+                        "Answer clear and useful in Rioplatense; end with a short done-summary. "
+                        "Ask at most ONE clarifying question if a critical detail is missing."
+                        if manageish
                         else (
-                            "RESEARCH: public fact / news / how-to / general question. "
-                            "If you are not certain from memory, call web_search NOW. "
-                            "If results are thin, read_page the best URL or wikipedia. "
-                            "Never say you don't know without searching first. "
-                            "Answer short in Rioplatense; be useful, not theatrical."
+                            "RESEARCH / HELP: this is a question, homework, explanation, or public fact. "
+                            "If you are not certain, call web_search or wikipedia NOW. "
+                            "For school help: explain step-by-step in clear Rioplatense, give a short example, "
+                            "then offer a practice question. Never invent citations. "
+                            "Never say you don't know without searching first when the topic is public."
+                            if schoolish
+                            else (
+                                "RESEARCH: public fact / news / how-to / general question. "
+                                "If you are not certain from memory, call web_search NOW. "
+                                "If results are thin, read_page the best URL or wikipedia. "
+                                "Never say you don't know without searching first. "
+                                "Answer short in Rioplatense; be useful, not theatrical."
+                            )
                         )
                     ),
                 },
@@ -613,11 +724,11 @@ class Brain:
         elif actionish:
             max_tokens = ACTION_MAX_TOKENS
             temperature = REASONING_TEMPERATURE
-            tool_rounds = ACTION_TOOL_ROUNDS
+            tool_rounds = MAX_TOOL_ROUNDS if manageish else ACTION_TOOL_ROUNDS
         elif factish:
             max_tokens = ACTION_MAX_TOKENS
             temperature = REASONING_TEMPERATURE
-            tool_rounds = 2  # search → answer (read_page only if model asks)
+            tool_rounds = MAX_TOOL_ROUNDS if manageish else 2  # search → answer
         elif opinionish:
             # Opinions must not touch tools (avoids Groq tool_use_failed 400).
             max_tokens = SMALL_MAX_TOKENS
@@ -631,6 +742,7 @@ class Brain:
         choice_mode: str | dict[str, Any] = (
             "required" if (actionish or factish) and not small else "auto"
         )
+        executed_actions: list[tuple[str, str]] = []
 
         try:
             for _ in range(tool_rounds):
@@ -717,6 +829,7 @@ class Brain:
                         tool_name, tool_params = parsed
                         fake_id = f"json-{time.time_ns()}"
                         result = self.execute(tool_name, json.dumps(tool_params, ensure_ascii=False))
+                        executed_actions.append((tool_name, result))
                         assistant_msg = {
                             "role": "assistant",
                             "content": "",
@@ -742,9 +855,26 @@ class Brain:
                         history.append(tool_msg)
                         choice_mode = "auto"
                         continue
+                    # Action turns: if the model only talked (or pasted a link), execute ourselves.
+                    if actionish:
+                        forced = self._force_execute_command(text)
+                        if forced:
+                            answer = self._finish(forced)
+                            yield answer
+                            self._store(session_id, answer)
+                            return
                     answer = self._finish(raw)
                     if not answer:
                         answer = "Sistemas en línea, pero no armé una respuesta. Probá de nuevo."
+                    # Still try to execute if the prose looks like a media/open dodge.
+                    if actionish and re.search(
+                        r"https?://|youtube\.com|youtu\.be|spotify\.com|abr[ií]\s+vos|abr[ií]\s+el\s+navegador",
+                        answer,
+                        re.I,
+                    ):
+                        forced = self._force_execute_command(text)
+                        if forced:
+                            answer = self._finish(forced)
                     yield answer
                     self._store(session_id, answer)
                     return
@@ -768,6 +898,7 @@ class Brain:
                 history.append(assistant_msg)
 
                 for call, result in _execute_tools_parallel(self.execute, tool_calls):
+                    executed_actions.append((call.function.name, result))
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": call.id,
@@ -775,6 +906,32 @@ class Brain:
                     }
                     messages.append(tool_msg)
                     history.append(tool_msg)
+
+            # Alexa-style: after pure execute tools, speak the confirm — no second LLM essay.
+            # Gemini manage / research turns keep synthesis for a clear summary.
+            research_tools = {
+                "web_search",
+                "wikipedia",
+                "read_page",
+                "image_search",
+                "kitchen_recipe",
+                "wellness_action",
+                "analyze_workspace",
+                "get_system_health",
+                "check_lan_status",
+            }
+            if (
+                actionish
+                and executed_actions
+                and not manageish
+                and not any(name in research_tools for name, _ in executed_actions)
+            ):
+                confirm = self._alexa_confirm(executed_actions)
+                if confirm:
+                    answer = self._finish(confirm)
+                    yield answer
+                    self._store(session_id, answer)
+                    return
 
             synth_tokens = SYNTHESIS_MAX_TOKENS if not small else max_tokens
             if actionish and not small:

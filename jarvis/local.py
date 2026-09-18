@@ -563,6 +563,31 @@ def try_local_command(
     if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur)\b", lower):
         return run("web_search", query=raw, max_results=5)
 
+    img = re.match(
+        r"^(?:busc[aá]|busca[r]?|mostr[aá]|dame|quiero|necesito)\s+"
+        r"(?:una?\s+)?(?:ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|"
+        r"diagrama(?:s)?|meme(?:s)?|picture(?:s)?|image(?:s)?)\s+(?:de\s+|del?\s+|sobre\s+)?(.+)$",
+        raw,
+        re.I,
+    )
+    if not img:
+        img = re.match(
+            r"^(?:ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|diagrama(?:s)?)\s+"
+            r"(?:de\s+|del?\s+|sobre\s+)?(.+)$",
+            raw,
+            re.I,
+        )
+    if img:
+        topic = img.group(1).strip(" .?¿!")
+        if topic:
+            if android:
+                return run(
+                    "phone_hands",
+                    action="search",
+                    target=f"{topic} ilustración",
+                )
+            return run("image_search", query=topic, max_results=5, open_browser=True)
+
     search = re.match(
         r"^(?:busca[r]?|busc[aá]|search|noticias(?:\s+de)?|google(?:a[rd]?)?)\s+(.+)$",
         raw,
@@ -570,6 +595,20 @@ def try_local_command(
     )
     if search:
         query = search.group(1).strip()
+        # "busca imagen de X" already handled above; still route image-ish queries.
+        if re.search(r"\b(ilustraci[oó]n|imagen|foto|dibujo|diagrama)\b", query, re.I):
+            topic = re.sub(
+                r"\b(ilustraci[oó]n(?:es)?|imagen(?:es)?|foto(?:s)?|dibujo(?:s)?|diagrama(?:s)?)\b",
+                "",
+                query,
+                flags=re.I,
+            )
+            topic = re.sub(r"\b(de|del|la|el|un|una|sobre)\b", " ", topic, flags=re.I)
+            topic = " ".join(topic.split()).strip(" .")
+            if topic:
+                if android:
+                    return run("phone_hands", action="search", target=query)
+                return run("image_search", query=topic, max_results=5, open_browser=True)
         if lower.startswith("google"):
             if android:
                 return run("phone_hands", action="search", target=query)
@@ -577,7 +616,9 @@ def try_local_command(
         return run("web_search", query=query, max_results=5)
 
     if len(raw) >= 12 and re.search(
-        r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|c[oó]mo\s+se\s+hace)\b",
+        r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|"
+        r"c[oó]mo\s+se\s+hace|capital\s+de|distancia|qu[eé]\s+es|qui[eé]n\s+es|"
+        r"definici[oó]n|significa)\b",
         lower,
     ):
         return run("web_search", query=raw, max_results=5)

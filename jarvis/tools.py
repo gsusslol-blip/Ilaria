@@ -48,12 +48,29 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "web_search",
-        "Search the live internet FAST via Bing (DuckDuckGo fallback). "
-        "Use for news, facts, prices, people, how-to — whenever you are unsure about a public fact. "
+        "Search the live internet FAST via Bing (Yahoo/DuckDuckGo fallback). "
+        "ALWAYS use for facts you do not have locally — news, prices, people, how-to, "
+        "distances, capitals, science. Prefer one quick search over guessing. "
         "Not for subjective taste/opinion (who is prettier, favorites).",
         {
             "query": {"type": "string"},
             "max_results": {"type": "integer", "default": 5},
+        },
+        ["query"],
+    ),
+    _fn(
+        "image_search",
+        "Find illustrations / photos / diagrams FAST. Opens Google Images in the browser "
+        "and returns a few image URLs. Use when the user asks for ilustración, imagen, "
+        "foto, dibujo, diagrama, meme visual, or 'mostrame cómo se ve X'.",
+        {
+            "query": {"type": "string", "description": "What to illustrate / find images of"},
+            "max_results": {"type": "integer", "default": 5},
+            "open_browser": {
+                "type": "boolean",
+                "default": True,
+                "description": "Open Google Images tab (default true on PC HUD)",
+            },
         },
         ["query"],
     ),
@@ -324,7 +341,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
             "platform": {
                 "type": "string",
-                "description": "youtube | ytmusic | google | spotify",
+                "description": "youtube | ytmusic | google | images | spotify",
             },
             "query": {"type": "string", "description": "Search / song / artist string"},
         },
@@ -460,6 +477,70 @@ class _VisibleText(HTMLParser):
         text = re.sub(r"\s+", " ", data).strip()
         if text:
             self.parts.append(text)
+
+
+def _image_search(
+    query: str,
+    max_results: int = 5,
+    *,
+    open_browser: bool = True,
+    actions: Actions | None = None,
+) -> str:
+    """Fast image/illustration lookup + optional Google Images tab."""
+    q = " ".join((query or "").split())
+    if not q:
+        return "Empty image query."
+    limit = max(1, min(int(max_results or 5), 8))
+    rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for backend in ("bing", "duckduckgo", "yahoo"):
+        try:
+            found = list(
+                DDGS(timeout=int(_SEARCH_TIMEOUT_S)).images(
+                    q, max_results=limit, backend=backend
+                )
+                or []
+            )
+            if found:
+                rows = found
+                break
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{backend}: {exc}")
+    opened = ""
+    surface = ""
+    if actions is not None:
+        surface = (getattr(actions, "client_surface", "hud") or "hud").strip().lower()
+    if open_browser and actions is not None and surface not in {
+        "android",
+        "ios",
+        "iphone",
+        "ipad",
+    }:
+        try:
+            opened = actions.app_search_action(
+                browser="brave",
+                platform="images",
+                query=q,
+            )
+        except Exception as exc:  # noqa: BLE001
+            opened = f"(browser open failed: {exc})"
+    if not rows:
+        detail = "; ".join(errors[:2]) if errors else "sin hits"
+        if opened:
+            return f"Abrí Google Imágenes para «{q}». ({detail})"
+        return f"No image results. ({detail})"
+    lines = [f"Images for «{q}» ({len(rows)} hits)."]
+    if opened:
+        lines.append(f"Browser: {opened}")
+    for item in rows[:limit]:
+        title = str(item.get("title") or item.get("name") or "").strip()
+        url = str(item.get("image") or item.get("url") or item.get("thumbnail") or "").strip()
+        page = str(item.get("url") or item.get("source") or "").strip()
+        if not url and not page:
+            continue
+        lines.append(f"- {title or 'imagen'}\n  {url or page}")
+    lines.append("Decile al usuario que ya abrí las ilustraciones en el navegador.")
+    return "\n".join(lines)
 
 
 def _search_relevance(query: str, rows: list[dict[str, Any]]) -> float:
@@ -676,6 +757,16 @@ def make_executor(
                 str(args.get("query", "")),
                 int(args.get("max_results") or 5),
                 workspace=actions.workspace,
+            )
+        if name == "image_search":
+            open_flag = args.get("open_browser")
+            if open_flag is None:
+                open_flag = True
+            return _image_search(
+                str(args.get("query", "")),
+                int(args.get("max_results") or 5),
+                open_browser=bool(open_flag),
+                actions=actions,
             )
         if name in {"read_page", "open_url"}:
             return _read_page(str(args.get("url", "")))
