@@ -353,7 +353,7 @@ def build_manifest_dict(
     notes: str = "",
     *,
     changelog: list[str] | None = None,
-    min_required_android_client: str = "1.5.4",
+    min_required_android_client: str = "1.5.8",
     release_date: str = "",
 ) -> dict[str, Any]:
     items = changelog if changelog is not None else ([notes] if notes else [])

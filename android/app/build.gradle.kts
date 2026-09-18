@@ -1,7 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
 android {
@@ -11,8 +19,21 @@ android {
         applicationId = "app.gsuss.asistente"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.5.7"
+        versionCode = 23
+        versionName = "1.5.8"
+    }
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storePassword = keystoreProperties.getProperty("storePassword")
+                val storePath = keystoreProperties.getProperty("storeFile")
+                if (!storePath.isNullOrBlank()) {
+                    storeFile = rootProject.file(storePath)
+                }
+            }
+        }
     }
     buildTypes {
         release {
@@ -21,6 +42,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

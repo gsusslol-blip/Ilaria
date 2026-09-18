@@ -77,7 +77,7 @@ def main() -> int:
         default=[],
         help="Repeatable changelog bullet",
     )
-    parser.add_argument("--min-android", default="1.5.4")
+    parser.add_argument("--min-android", default="1.5.8")
     parser.add_argument("--out", default=str(ROOT / "dist" / "pc-update"))
     parser.add_argument(
         "--publish",

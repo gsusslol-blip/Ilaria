@@ -1,8 +1,9 @@
 {
-  "version": "1.5.1",
-  "min_required_android_client": "1.5.4",
+  "version": "1.5.8",
+  "min_required_android_client": "1.5.8",
   "changelog": [
-    "CDN GitHub Releases",
-    "Passive heal 5xx/timeout"
+    "Quiet-Mode + memoria condensada + deep-link YouTube",
+    "HUD Reloj scroll + Fast-Path + health inbox FIT",
+    "Play Store: build-play.bat + firma release"
   ]
 }

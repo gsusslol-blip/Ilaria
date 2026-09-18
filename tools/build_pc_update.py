@@ -51,7 +51,7 @@ def collect_files() -> list[Path]:
     return sorted(files, key=lambda p: p.as_posix().lower())
 
 
-def build(out_dir: Path, version: str, zip_url: str, notes: str, min_android: str = "1.5.4") -> tuple[Path, Path]:
+def build(out_dir: Path, version: str, zip_url: str, notes: str, min_android: str = "1.5.8") -> tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     zip_path = out_dir / f"ilaria-pc-{version}.zip"
     files = collect_files()

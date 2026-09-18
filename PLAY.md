@@ -1,38 +1,58 @@
 # Play Store y portable
 
-Hay **dos entregas**. No es la misma binario.
+Hay **dos entregas**. No es el mismo binario.
 
-## 1. Portable Windows (revisar ahora)
+## 1. Portable Windows (PC)
 
-1. Doble clic en `run.bat`
-2. Se abre **una ventana propia** (Edge WebView2), no Brave
-3. URL de respaldo: **http://localhost:8787/welcome**
+1. `run.bat` → HUD local
+2. Distribución: `build.bat` → `dist\`
 
-Brave suele romper `http://127.0.0.1` porque lo “mejora” a HTTPS. Por eso no entraba.
+## 2. Android sideload (LAN / WAN, sin Play)
 
-Si igual querés Brave: `abrir-brave.bat` (con Ilaria ya abierta) o desactivá **Siempre usar HTTPS** en `brave://settings/security`.
+```bat
+build-apk.bat
+```
 
-Para distribuir el portable: `build.bat` → carpeta `dist\JARVIS`.
+Salida: `dist\Ilaria-android.apk` (debug). También en GitHub Releases.
 
-## 2. App de Play Store (Android) — modo LAN (híbrido)
+## 3. Google Play Store (público, firmado)
 
-El teléfono **no** es un SaaS aparte: habla con Ilaria en **tu PC** (mismo Wi-Fi).
+### Una sola vez
 
-1. En la PC: `HUD_HOST=0.0.0.0` en `.env`, abrí `run.bat` / `Ilaria.exe`
-2. Anotá la URL que imprime (ej. `http://192.168.1.45:8787`)
-3. Firewall de Windows: permitir puerto **8787** en red privada si el celular no conecta
-4. Android Studio → carpeta `android` → en la app pegá esa URL e iniciá sesión con **gsuss**
-5. Notas / diario / herramientas de PC se ejecutan en el disco de la PC (`data/`)
+1. Cuenta en [Play Console](https://play.google.com/console) (~25 USD).
+2. Hosteá `docs/privacy.html` en **HTTPS** (GitHub Pages / Netlify) y guardá la URL.
+3. Creá el keystore (no se sube a Git):
 
-Google no publica un `.exe` de Python. Hace falta el proyecto en `android/`.
+```bat
+tools\create_play_keystore.bat
+```
 
-1. Instalá [Android Studio](https://developer.android.com/studio)
-2. File → Open → carpeta `android`
-3. Dejá que Gradle sincronice (si pide wrapper, Generate)
-4. Build → Generate Signed App Bundle
-5. Cuenta de desarrollador de Play (~25 USD, una vez)
-6. Subí el `.aab` + esta política de privacidad **hosteada en https** (`docs/privacy.html`)
+4. Editá `android\keystore.properties` (copiado del `.example`) con las contraseñas reales.
 
-Play puede rechazar nombres de marca. El de la app es **Ilaria**.
+### Cada release
 
-Esto no lo puedo publicar yo: hace falta **tu** Play Console.
+```bat
+build-play.bat
+```
+
+Salida: `dist\Ilaria-play.aab`
+
+En Play Console:
+
+1. App nueva **Ilaria** (`app.gsuss.asistente`)
+2. Producción o **Prueba interna** → subir el `.aab`
+3. Ficha: ícono, capturas, descripción (dejar claro: necesita la PC con Ilaria en LAN/WAN)
+4. **Data safety** + URL de privacidad
+5. Enviar a revisión
+
+### Seguridad del keystore
+
+- `secrets/ilaria-release.jks` y `android/keystore.properties` están en `.gitignore`
+- Si perdés el `.jks`, **no podés actualizar** la misma app en Play
+- Hacé backup cifrado ya
+
+### Notas de revisión Google
+
+- La app es cliente del asistente en **tu PC** (no SaaS propio): decilo en la descripción
+- Evitá marcas de terceros (JARVIS, etc.)
+- El APK debug de Releases **no** sirve para Play; usá siempre el `.aab` de `build-play.bat`
