@@ -9,10 +9,11 @@ import re
 
 # Injected into the research synth turn (Groq/Ollama) after tools return.
 SEARCH_SPEAK_INSTRUCTION = (
-    "Vas a recibir datos de una búsqueda web. Respondé la duda del usuario en "
-    "UNA sola oración fluida, natural y en español rioplatense. "
-    "No cites fuentes, no uses viñetas, no digas 'según el sitio X' ni 'Source:'. "
-    "Hablalo directo, como si ya lo supieras. Máximo ~40 palabras."
+    "Vas a responder la duda del usuario basándote únicamente en el contexto de búsqueda provisto. "
+    "Tu respuesta debe ser corta (máximo 2 oraciones), fluida, natural y redactada en español rioplatense. "
+    "Está terminantemente prohibido enumerar opciones, usar viñetas, citar páginas web o decir frases como "
+    "'según los resultados de búsqueda' / 'Source:' / 'según el sitio'. "
+    "Hablalo directo, como si ya lo supieras de memoria."
 )
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+", re.I)
@@ -20,7 +21,10 @@ _SOURCE_RE = re.compile(r"^Source:\s*.+$", re.I | re.M)
 _CITATION_RE = re.compile(r"\[\d+\]|\(\s*https?://[^)]+\)")
 _DATE_RE = re.compile(
     r"\b\d{1,2}\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\.?\s+\d{4}\b"
-    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b",
+    r"|\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
+    r"septiembre|octubre|noviembre|diciembre)\s+(?:de\s+)?\d{4}\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b"
+    r"|\b\d+\s+(?:d[ií]as?|horas?|semanas?)\s+atr[aá]s\b",
     re.I,
 )
 _PARENS_RE = re.compile(r"\([^)]*\)|\[[^\]]*\]")
@@ -33,30 +37,33 @@ _NOISE_LINE = re.compile(
 )
 
 
-def clean_search_results(raw_snippets: list[str], max_chars: int = 800) -> str:
-    """Strip URLs/dates/brackets so a small LLM does not parrot junk."""
-    cleaned: list[str] = []
-    for snippet in raw_snippets:
-        text = _URL_RE.sub("", snippet or "")
-        text = _DATE_RE.sub("", text)
-        text = _PARENS_RE.sub("", text)
-        text = _CITATION_RE.sub("", text)
-        text = re.sub(r"[#*_`]+", "", text)
-        text = " ".join(text.split()).strip(" .-–—")
-        if text and not _NOISE_LINE.search(text):
-            cleaned.append(text)
-    return "\n".join(cleaned)[:max_chars]
+def clean_search_results(
+    raw_text: str | list[str] | None,
+    max_chars: int = 1000,
+) -> str:
+    """
+    Strip search junk (URLs, dates, brackets) so a small LLM gets clean context.
+    Accepts a raw dump string or a list of snippet strings.
+    """
+    if not raw_text:
+        return ""
+    if isinstance(raw_text, list):
+        parts = [clean_search_results(s, max_chars=max_chars) for s in raw_text if s]
+        return "\n".join(p for p in parts if p)[:max_chars]
+
+    text = _SOURCE_RE.sub("", raw_text)
+    text = _URL_RE.sub("", text)
+    text = _DATE_RE.sub("", text)
+    text = _PARENS_RE.sub("", text)
+    text = _CITATION_RE.sub("", text)
+    text = re.sub(r"[#*_`]+", "", text)
+    text = re.sub(r"[—•]+", " ", text)
+    cleaned = " ".join(text.split()).strip(" .-–—")
+    return cleaned[:max_chars]
 
 
 def _clean_blob(text: str) -> str:
-    text = _SOURCE_RE.sub("", text or "")
-    text = _URL_RE.sub("", text)
-    text = _DATE_RE.sub("", text)
-    text = _CITATION_RE.sub("", text)
-    text = _PARENS_RE.sub("", text)
-    text = re.sub(r"[#*_`]+", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip(" .-–—")
+    return clean_search_results(text, max_chars=4000)
 
 
 def _snippet_bodies(raw: str) -> list[str]:
@@ -164,7 +171,6 @@ def speakable_from_search(
             best = clean
 
     if not best:
-        # Fallback: cleaned joined snippets (user's clean_search_results pattern).
         best = clean_search_results(_snippet_bodies(raw), max_chars=400) or cleaned_whole
 
     m = re.search(r"^(.+?[.!?…])(?:\s|$)", best)

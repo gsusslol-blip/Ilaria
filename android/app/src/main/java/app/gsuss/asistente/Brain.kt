@@ -458,6 +458,14 @@ class Brain(private val prefs: Prefs) {
 
     fun heartbeat(): Boolean {
         if (pingMe()) return true
+        // If WAN is sticky, try LAN before declaring offline.
+        if (prefs.isWanTunnel(prefs.baseUrl)) {
+            val lan = RemoteSync.preferLan(prefs.appCtx, prefs)
+            if (lan.isNotBlank() && !prefs.isWanTunnel(lan) && probe(lan)) {
+                prefs.baseUrl = lan
+                return pingMe() || probe(lan)
+            }
+        }
         return probe(prefs.baseUrl)
     }
 

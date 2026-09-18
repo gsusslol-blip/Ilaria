@@ -926,15 +926,17 @@ class Brain:
                     executed_actions.append((call.function.name, result))
                     content = result[:12000]
                     if call.function.name in {"web_search", "wikipedia"}:
-                        from jarvis.search_speak import speakable_from_search
+                        from jarvis.search_speak import clean_search_results, speakable_from_search
 
                         spoken = speakable_from_search(result, text, max_words=42)
+                        cleaned = clean_search_results(result, max_chars=900)
                         if spoken:
-                            # Keep a tiny raw tail for the synth LLM if needed.
                             content = (
                                 f"Respuesta hablable: {spoken}\n"
-                                f"(Contexto breve)\n{result[:900]}"
+                                f"Contexto limpio:\n{cleaned}"
                             )[:12000]
+                        elif cleaned:
+                            content = f"Contexto limpio:\n{cleaned}"[:12000]
                     tool_msg = {
                         "role": "tool",
                         "tool_call_id": call.id,

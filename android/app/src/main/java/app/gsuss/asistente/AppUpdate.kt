@@ -49,14 +49,10 @@ object AppUpdate {
     fun applyOnLaunch(context: Context, prefs: Prefs) {
         if (!applying.compareAndSet(false, true)) return
         try {
-            var base = prefs.baseUrl
-            if (base.isBlank() || prefs.looksLikeRouter(base)) {
-                LanFind.find(context)?.let {
-                    prefs.baseUrl = it
-                    base = it
-                }
-            }
-            if (base.isBlank()) return
+            // OTA always via LAN when possible — never burn ngrok for APK downloads.
+            val base = RemoteSync.preferLan(context, prefs)
+            if (base.isBlank() || prefs.looksLikeRouter(base)) return
+            prefs.baseUrl = base
             val remote = check(prefs, localCode(context)) ?: return
             if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {

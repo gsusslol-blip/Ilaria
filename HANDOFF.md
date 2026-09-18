@@ -19,7 +19,9 @@ Español rioplatense en chat; comentarios de código en inglés. Commits solo si
 - Libre pausa Porcupine vía `POST /api/wake/hud-listening`.
 - Preferencias owner: `/api/voice-prefs` + Settings (sensibilidad wake, mic index, Whisper size, STT `es|en|it|…|auto`).
 - Voces: Piper/Edge + **Yui** (tono+pitch) + Elsa/Diego IT. Settings → Voz / Tono.
-- Search hablable: `jarvis/search_speak.py` limpia dumps Bing/Yahoo a 1 oración (sin LLM extra).
+- Search hablable: `jarvis/search_speak.py` limpia dumps Bing/Yahoo a 1–2 oraciones (sin LLM extra).
+- OTA local: `GET /version.json` y `GET /static/version.json` (carpeta segura `data/public/`, no todo `data/`).
+- Celular LAN-first: Android/iOS priorizan UDP/`lastLanUrl`/`ilaria.local` antes que ngrok (OTA APK también).
 - GK fijas: `jarvis/gk_fixes.py` (+ overlay opcional `data/gk_fixes.json`).
 - Wake reusa un solo PvRecorder; sin PicoVoice → botón Libre / Tap-to-Talk.
 - Android: early_audio + barge-in; iOS: WakeListen SFSpeech (botón Mic).

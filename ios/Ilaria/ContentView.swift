@@ -102,6 +102,27 @@ struct ContentView: View {
             if brain == nil { brain = Brain(prefs: prefs) }
             UIDevice.current.isBatteryMonitoringEnabled = true
             status = prefs.loggedIn && !prefs.solo ? "sync PC" : "independiente"
+            // LAN-first: if linked, rediscover Wi‑Fi HUD before sticking to ngrok.
+            if prefs.loggedIn && !prefs.solo {
+                Task.detached {
+                    let found = LanFind.find()
+                    await MainActor.run {
+                        if let found, Prefs.probeHealth(found) {
+                            let url = Prefs.normalizeBase(found)
+                            prefs.baseUrl = url
+                            prefs.lastLanUrl = url
+                        } else if Prefs.isWanTunnel(prefs.baseUrl) {
+                            for candidate in [prefs.lastLanUrl, "http://ilaria.local:8787"] {
+                                let url = Prefs.normalizeBase(candidate)
+                                guard !url.isEmpty, Prefs.probeHealth(url) else { continue }
+                                prefs.baseUrl = url
+                                prefs.lastLanUrl = url
+                                break
+                            }
+                        }
+                    }
+                }
+            }
         }
         .onChange(of: busy) { _, v in wake.busy = v }
     }
@@ -198,7 +219,9 @@ struct ProfileSheet: View {
                             let found = LanFind.find()
                             await MainActor.run {
                                 if let found {
-                                    prefs.baseUrl = Prefs.normalizeBase(found)
+                                    let url = Prefs.normalizeBase(found)
+                                    prefs.baseUrl = url
+                                    prefs.lastLanUrl = url
                                     info = "Encontrada: \(prefs.baseUrl)"
                                     var comps = URLComponents()
                                     comps.scheme = "ilaria"

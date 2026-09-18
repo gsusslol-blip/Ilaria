@@ -5,7 +5,8 @@ import android.content.Intent
 import android.net.Uri
 
 /**
- * Hybrid PC discovery: LAN UDP → last HTTPS prefs → Telegram deep link (human).
+ * Hybrid PC discovery: LAN UDP → mDNS/last LAN → saved prefs → (UI) Telegram.
+ * Always prefers LAN over ngrok/WAN so home use does not burn tunnel sessions.
  */
 object RemoteSync {
     const val SYNC_HOST = "sync"
@@ -25,9 +26,11 @@ object RemoteSync {
             "connected", "lan" -> {
                 val ip = uri.getQueryParameter("ip")?.trim().orEmpty()
                 if (ip.isBlank()) return false
-                prefs.baseUrl = prefs.normalizeBase(
+                val lan = prefs.normalizeBase(
                     if (ip.contains("://")) ip else "http://$ip:8787",
                 )
+                prefs.baseUrl = lan
+                prefs.lastLanUrl = lan
                 return true
             }
         }
@@ -35,17 +38,46 @@ object RemoteSync {
     }
 
     /**
-     * Phase 1 LanFind → Phase 2 saved remote prefs probe → else null (UI opens Telegram).
+     * Phase 1 LanFind → Phase 2 last LAN / ilaria.local → Phase 3 saved (incl. WAN).
      */
     fun resolveHybrid(context: Context, prefs: Prefs): String? {
-        val found = LanFind.find(context)
-        if (found != null && Brain.probe(found)) {
-            prefs.baseUrl = prefs.normalizeBase(found)
-            return prefs.baseUrl
-        }
+        val lan = discoverLan(context, prefs)
+        if (lan != null) return lan
+
         val saved = prefs.normalizeBase(prefs.baseUrl)
         if (saved.isNotBlank() && !prefs.looksLikeRouter(saved) && Brain.probe(saved)) {
+            if (!prefs.isWanTunnel(saved)) {
+                prefs.lastLanUrl = saved
+            }
             return saved
+        }
+        return null
+    }
+
+    /** Prefer live LAN even when baseUrl already points at ngrok. */
+    fun preferLan(context: Context, prefs: Prefs): String {
+        val lan = discoverLan(context, prefs)
+        if (lan != null) return lan
+        val cur = prefs.normalizeBase(prefs.baseUrl)
+        return cur
+    }
+
+    private fun discoverLan(context: Context, prefs: Prefs): String? {
+        val found = LanFind.find(context)
+        if (found != null && Brain.probe(found)) {
+            val url = prefs.normalizeBase(found)
+            prefs.baseUrl = url
+            prefs.lastLanUrl = url
+            return url
+        }
+        for (candidate in listOf(prefs.lastLanUrl, "http://ilaria.local:8787")) {
+            val url = prefs.normalizeBase(candidate)
+            if (url.isBlank() || prefs.looksLikeRouter(url) || prefs.isWanTunnel(url)) continue
+            if (Brain.probe(url)) {
+                prefs.baseUrl = url
+                prefs.lastLanUrl = url
+                return url
+            }
         }
         return null
     }

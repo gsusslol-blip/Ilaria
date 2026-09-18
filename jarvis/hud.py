@@ -14,13 +14,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from jarvis import __version__
 from jarvis.accounts import SESSION_MAX_AGE_SECONDS, User
 from jarvis.android_ota import advertised as android_update, apk_path
-from jarvis.config import STATIC_DIR
+from jarvis.config import DATA_DIR, STATIC_DIR
 from jarvis.lan import phone_base_urls
 from jarvis.packs import PACKS, normalize_pack_ids, public_packs, routine_slot, welcome_script
 from jarvis.piper_tts import piper_available
@@ -270,6 +271,11 @@ def create_hud(state: AppState) -> FastAPI:
             "version": __version__,
             "tts": "piper" if piper_available() else "edge",
         }
+
+    @app.get("/version.json")
+    async def version_json_root() -> JSONResponse:
+        """Local OTA/channel manifest — avoids GitHub 404 when no release is published."""
+        return JSONResponse(_local_version_payload())
 
     @app.get("/api/stack-health")
     async def stack_health(request: Request) -> dict[str, Any]:
@@ -1187,4 +1193,45 @@ def create_hud(state: AppState) -> FastAPI:
         dest.write_bytes(data)
         return {"ok": True, "path": rel, "size": dest.stat().st_size}
 
+    # Public OTA files only — never mount all of data/ (accounts, memories, secrets).
+    public_dir = _ensure_public_ota_dir()
+    app.mount("/static", StaticFiles(directory=str(public_dir)), name="static")
+
     return app
+
+
+def _local_version_payload() -> dict[str, Any]:
+    from jarvis.pc_updater import load_channel_cache
+
+    channel = load_channel_cache() or {}
+    android = android_update()
+    return {
+        "app": "Ilaria",
+        "version": str(channel.get("version") or __version__),
+        "min_required_android_client": str(
+            channel.get("min_required_android_client") or android.get("versionName") or __version__
+        ),
+        "changelog": list(channel.get("changelog") or []),
+        "android": {
+            "versionCode": android.get("versionCode"),
+            "versionName": android.get("versionName"),
+            "ready": android.get("ready"),
+            "apk": android.get("apk"),
+        },
+        "notes": "Local HUD manifest. For PC ZIP updates set ILARIA_UPDATE_URL to a published release.",
+    }
+
+
+def _ensure_public_ota_dir():
+    """Write data/public/version.json for /static/version.json (safe subset of data/)."""
+    public = DATA_DIR / "public"
+    public.mkdir(parents=True, exist_ok=True)
+    path = public / "version.json"
+    try:
+        path.write_text(
+            json.dumps(_local_version_payload(), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return public
