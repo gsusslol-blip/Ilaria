@@ -42,6 +42,8 @@ def ensure_owner(accounts: AccountStore) -> str:
     accounts.demote_other_owners(username)
     # Keep member registration open on this PC; owner lock is only the reserved username.
     accounts.set_meta("allow_signups", "1")
+    # Members may use PC tools inside existing policy (no power/banking/owner-only).
+    accounts.set_meta("members_pc_hands", "1")
     note = (
         "Ilaria - cuenta dueno (solo esta PC)\n"
         f"usuario: {username}\n"

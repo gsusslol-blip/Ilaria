@@ -92,10 +92,11 @@ def looks_like_cloud_model(name: str) -> bool:
 
 
 def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
-    provider = settings.llm_provider
+    provider = (settings.llm_provider or "auto").strip().lower() or "auto"
+    ollama_up = _ollama_reachable(settings.ollama_base_url)
+
     if provider == "auto":
         preferred = (settings.llm_model or "").strip()
-        ollama_up = _ollama_reachable(settings.ollama_base_url)
         # Precision: prefer Groq/cloud whenever a key exists, unless the user pinned a
         # local Ollama tag in LLM_MODEL (e.g. gemma2:2b / llama3.1:8b).
         pinned_local = bool(preferred) and not looks_like_cloud_model(preferred)
@@ -119,11 +120,22 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             raise RuntimeError(
                 "No hay cerebro. Levantá Ollama (gemma2:2b) o pegá GROQ_API_KEY en .env."
             )
+    elif provider == "groq" and not settings.groq_api_key:
+        provider = "ollama" if ollama_up else provider
+    elif provider == "openai" and not settings.openai_api_key:
+        provider = "ollama" if ollama_up else provider
+    elif provider == "gemini" and not settings.gemini_api_key:
+        provider = "ollama" if ollama_up else provider
 
     if provider in {"ollama", "llamacpp"}:
+        if not ollama_up and provider == "ollama":
+            # Last chance: still return endpoint — caller may get connection errors.
+            pass
         return _ollama_endpoint(settings, model)
     if provider == "groq":
         if not settings.groq_api_key:
+            if ollama_up:
+                return _ollama_endpoint(settings, model)
             raise RuntimeError("GROQ_API_KEY is empty.")
         return LLMEndpoint(
             label="groq",
@@ -135,6 +147,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
         )
     if provider == "openai":
         if not settings.openai_api_key:
+            if ollama_up:
+                return _ollama_endpoint(settings, model)
             raise RuntimeError("OPENAI_API_KEY is empty.")
         return LLMEndpoint(
             label="openai",
@@ -143,6 +157,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
         )
     if provider == "gemini":
         if not settings.gemini_api_key:
+            if ollama_up:
+                return _ollama_endpoint(settings, model)
             raise RuntimeError("GEMINI_API_KEY is empty.")
         return LLMEndpoint(
             label="gemini",

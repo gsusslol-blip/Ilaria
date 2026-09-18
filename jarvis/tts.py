@@ -76,7 +76,8 @@ def _cleanup() -> None:
 def _cache_key(clean: str, settings: Settings) -> str:
     provider = _provider(settings)
     voice = (settings.tts_voice or "").strip() or DEFAULT_VOICE
-    raw = f"{provider}|{voice}|{clean}".encode("utf-8")
+    piper = (getattr(settings, "piper_model_name", None) or "").strip()
+    raw = f"{provider}|{voice}|{piper}|{clean}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:28]
 
 
@@ -147,7 +148,11 @@ def _assert_audio_name(name: str) -> None:
 
 
 def _provider(settings: Settings) -> str:
-    return (os.getenv("TTS_PROVIDER") or getattr(settings, "tts_provider", "piper") or "piper").strip().lower()
+    # Per-user preference (state.settings_for) wins over process env.
+    chosen = (getattr(settings, "tts_provider", None) or "").strip().lower()
+    if chosen:
+        return chosen
+    return (os.getenv("TTS_PROVIDER") or "piper").strip().lower() or "piper"
 
 
 def first_speakable_sentence(text: str) -> str | None:
@@ -209,7 +214,8 @@ async def speak_to_file(settings: Settings, text: str, name: str | None = None) 
         from jarvis.piper_tts import synthesize_wav
 
         path = DATA_DIR / (Path(stamp).stem + ".wav")
-        await asyncio.to_thread(synthesize_wav, clean, path)
+        model_name = (getattr(settings, "piper_model_name", None) or "").strip() or None
+        await asyncio.to_thread(synthesize_wav, clean, path, model_name=model_name)
 
     if len(clean) <= _CACHE_MAX_CHARS:
         try:

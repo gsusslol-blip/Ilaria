@@ -67,14 +67,25 @@ def transcribe_local(settings: Settings, data: bytes, filename: str) -> str:
         path = tmp.name
     try:
         model = _load(settings)
-        segments, _info = model.transcribe(
+        # language=None → Whisper auto-detects (es, en, pt, fr, …).
+        forced = (os.getenv("STT_LANGUAGE") or "").strip().lower() or None
+        if forced in {"auto", "detect", "*"}:
+            forced = None
+        segments, info = model.transcribe(
             path,
             beam_size=1,
-            language="es",
+            language=forced,
             vad_filter=True,
             condition_on_previous_text=False,
         )
         text = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
+        lang = getattr(info, "language", None) or forced or "es"
+        try:
+            from jarvis.stt import remember_detected_language
+
+            remember_detected_language(str(lang))
+        except Exception:
+            pass
         return " ".join(text.split())
     finally:
         try:

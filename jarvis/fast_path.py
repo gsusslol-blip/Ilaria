@@ -114,6 +114,36 @@ def match_fast_path(
     ):
         return "wellness_action", {"action": "leer_reloj", "tipo_tema": "smartwatch"}, "watch"
 
+    m = re.fullmatch(
+        r"(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|ll[eé]vame\s+a|naveg[aá]\s+(?:a|hacia)|"
+        r"direcciones?\s+(?:a|para)|gps\s+(?:a|hacia))\s+(.+)",
+        lower,
+    )
+    if m:
+        dest = m.group(1).strip(" .")
+        if 1 < len(dest) <= 120:
+            if _phone(surf):
+                return "phone_hands", {"action": "navigate", "target": dest}, "navigate"
+            return "open_maps", {"destination": dest, "origin": ""}, "maps"
+
+    if re.fullmatch(
+        r"(?:atend[eé]|responder?|abrir)\s+(?:el\s+)?(?:intercomunicador|portero|timbre)|"
+        r"(?:intercomunicador|portero|timbre)(?:\s+por\s+favor)?|"
+        r"abrir\s+(?:el\s+)?portero",
+        lower,
+    ):
+        return "intercom_action", {"action": "answer"}, "intercom_answer"
+
+    if re.fullmatch(
+        r"(?:ver|abr[ií])\s+(?:la\s+)?(?:c[aá]mara|video|vista)\s+(?:del\s+)?(?:intercomunicador|portero|timbre)|"
+        r"(?:intercomunicador|portero)\s+(?:en\s+)?(?:video|c[aá]mara)",
+        lower,
+    ):
+        return "intercom_action", {"action": "view"}, "intercom_view"
+
+    if re.fullmatch(r"(?:estado\s+(?:del\s+)?)?(?:intercomunicador|portero)", lower):
+        return "intercom_action", {"action": "status"}, "intercom_status"
+
     if re.fullmatch(
         r"(?:diario(?:\s+de\s+hoy)?|le[eé]r?\s+el\s+diario|mostr[aá]\s+el\s+diario|"
         r"bit[aá]cora(?:\s+de\s+hoy)?)",

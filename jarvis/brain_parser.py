@@ -150,11 +150,14 @@ def parse_and_execute(
                 payload = {"status": "error", "raw": raw}
             if action_type not in {"listar", "list", "catalogo", "catálogo", "list_recipes"}:
                 if payload.get("status") == "success":
-                    log_to_diario(user, f"Visualizó la receta de: {dish}")
-                elif payload.get("status") == "not_found" or payload.get("trigger_llm_fallback"):
-                    log_to_diario(user, f"Buscó receta no registrada (fallback LLM): {dish}")
-                    payload["status"] = "trigger_llm_fallback"
-                    payload["comida"] = dish
+                    src = payload.get("source") or payload.get("found_in") or "local"
+                    log_to_diario(user, f"Receta ({src}): {dish}")
+                elif payload.get("status") == "not_found":
+                    log_to_diario(user, f"Receta no encontrada: {dish}")
+                    # Prefer speakable user text; never ask the model to re-call tools.
+                    if payload.get("speakable"):
+                        payload["status"] = "success"
+                        payload["source"] = payload.get("source") or "empty"
             payload["tool"] = name
             payload["client"] = client_info
             payload["action"] = action_type

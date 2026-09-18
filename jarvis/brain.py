@@ -33,7 +33,7 @@ from jarvis.personality import (
     split_system_prompt,
 )
 from jarvis.security import redact_secrets, secret_values
-from jarvis.tools import PHONE_BLOCKED_TOOLS, make_executor, tools_for_surface
+from jarvis.tools import MEMBER_SAFE_PC, PHONE_BLOCKED_TOOLS, make_executor, schemas_for, tools_for_surface
 
 MAX_HISTORY = 24
 MAX_TOOL_ROUNDS = 4
@@ -49,15 +49,26 @@ SMALL_TEMPERATURE = 0.35
 _ACTION_HINT = (
     r"\b(abr[ií]|abrime|abrir|abre|open|lanz[aá]|ejecut[aá]|cerr[aá]|volumen|volume|silenci|"
     r"mute|unmute|captura|screenshot|poneme|pon[eé]|reproduc|paus[aá]|busc[aá]|google|anot[aá]|nota|"
-    r"deshac|undo|timer|record[aá]|avis[aá]|whatsapp|mapa|ruta|traduc|"
+    r"deshac|undo|timer|record[aá]|avis[aá]|whatsapp|mapa|ruta|traduc|llevame|ll[eé]vame|naveg|"
+    r"intercomunicador|portero|timbre|doorbell|"
     r"portapapeles|clipboard|apag[aá]\s+la\s+pc|reinici[aá]\s+la\s+pc|bloque[aá]|"
     r"sub[ií].{0,12}volumen|baj[aá].{0,12}volumen|siguiente|anterior|escritorio|descargas)\b"
 )
 _FACT_HINT = (
     r"\b(qu[eé]\s+es|qui[eé]n\s+(?:es|fue|era)\b(?!\s+m[aá]s)|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|"
-    r"c[oó]mo\s+(?:se|funciona|hacer)|precio|cotiz|noticia|últim|ultimo|"
-    r"significa|definici[oó]n|explica|tell me|what is|who is|when was|how to)\b"
-    r"|\?$"
+    r"c[oó]mo\s+(?:se|funciona|hacer|hago|calculo|resuelvo)|precio|cotiz|noticia|últim|ultimo|"
+    r"significa|definici[oó]n|explica|explicame|explicá|contame|decime|"
+    r"cu[aá]nto\s+(?:es|vale|mide|pesa|dura)|diferencia\s+entre|"
+    r"tell me|what is|who is|when was|how to|why\s+is|explain)\b"
+    r"|\?"
+)
+_SCHOOL_HINT = (
+    r"\b(tarea|deberes|examen|parcial|trabajo\s+pr[aá]ctico|tp\b|resumen|cuestionario|"
+    r"estudi[oa]|materia|colegio|escuela|secundari|primari|universidad|facultad|"
+    r"matem[aá]tica|historia|geograf[ií]a|biolog[ií]a|qu[ií]mica|f[ií]sica|literatura|"
+    r"lengua|ingl[eé]s|filosof[ií]a|econom[ií]a|ecuaci[oó]n|fracci[oó]n|derivada|"
+    r"integrales?|teorema|ensayo|monograf[ií]a|bibliograf[ií]a|ayuda\s+escolar|"
+    r"homework|study|quiz|solve|ejercicio)\b"
 )
 # Subjective taste — answer locally; do NOT force web_search (triggers provider 403/noise).
 _OPINION_HINT = (
@@ -209,6 +220,16 @@ class Brain:
         return self._endpoint
 
     @property
+    def pc_hands(self) -> bool:
+        """Owner, or member with PC tools (members_pc_hands / MEMBER_SAFE_PC)."""
+        if self.is_owner:
+            return True
+        allowed = self.allowed_tools
+        if allowed is None:
+            return True
+        return "open_app" in allowed or "set_volume" in allowed
+
+    @property
     def status(self) -> dict[str, str]:
         llm = "local"
         if self.settings.has_llm:
@@ -220,7 +241,7 @@ class Brain:
             "name": self.settings.assistant_name,
             "llm": llm,
             "net": "online",
-            "hands": "full" if self.is_owner else "limited",
+            "hands": "full" if self.is_owner else ("pc" if self.pc_hands else "limited"),
             "mail": "on" if self.settings.has_smtp else "off",
             "ha": "on" if self.settings.has_ha else "off",
             "stt": "ready" if self.settings.has_stt else "text-only",
@@ -241,6 +262,81 @@ class Brain:
             self.settings,
             self.allowed_tools,
             surface=getattr(self.actions, "client_surface", "hud"),
+        )
+
+    def _rescue_from_error(self, text: str, exc: BaseException) -> str:
+        """Never dump raw provider errors — always try to answer the user."""
+        prose = _failed_generation_text(exc)
+        if prose and len(prose) > 12 and not prose.strip().startswith("{"):
+            return prose
+        # If the model tried a tool we can run, execute it.
+        parsed = _failed_generation_tool(exc)
+        if parsed:
+            tool_name, args = parsed
+            allowed = self.allowed_tools
+            if allowed is None or tool_name in allowed:
+                try:
+                    return self.execute(tool_name, json.dumps(args, ensure_ascii=False))
+                except Exception:  # noqa: BLE001
+                    pass
+        # Mechanical / wiki / search fallbacks without the LLM.
+        try:
+            local = self._local_answer(text)
+            low = (local or "").lower()
+            stub = low.startswith(
+                (
+                    "no capt",
+                    "no entend",
+                    "sistemas en",
+                    "todavía no armé",
+                    "todavia no arme",
+                    "sin llm",
+                    "modo local",
+                    "sin key",
+                )
+            )
+            if local and not stub:
+                return local
+        except Exception:  # noqa: BLE001
+            pass
+        # One shot web_search for question-like turns.
+        if _looks_like_question(text) or re.search(_SCHOOL_HINT, text, re.I) or re.search(
+            _FACT_HINT, text, re.I
+        ):
+            try:
+                hit = self.execute(
+                    "web_search",
+                    json.dumps({"query": text[:180], "max_results": 5}, ensure_ascii=False),
+                )
+                if hit and "error" not in hit.lower()[:40] and not hit.startswith("No results"):
+                    return (
+                        "Busqué esto por vos:\n"
+                        f"{hit[:1200]}\n"
+                        "Si querés, pedime que te lo explique más simple o con un ejemplo."
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+        # Wikipedia one-shot for short fact questions.
+        topic = re.sub(
+            r"^(qu[eé]\s+es|qui[eé]n\s+es|capital\s+de|defin[ií])\s+",
+            "",
+            (text or "").strip(),
+            flags=re.I,
+        ).strip(" ?¿")
+        if 2 <= len(topic.split()) <= 6:
+            try:
+                wiki = self.execute(
+                    "wikipedia",
+                    json.dumps({"topic": topic[:80]}, ensure_ascii=False),
+                )
+                if wiki and "failed" not in wiki.lower()[:40] and len(wiki) > 40:
+                    return wiki[:900]
+            except Exception:  # noqa: BLE001
+                pass
+        return (
+            "Se me trabó el enlace un segundo, pero seguimos. "
+            "Reformulá la pregunta en una frase corta o pedime «buscá X» / «explicame X» "
+            "y te ayudo (también con tareas y estudio)."
         )
 
     def _load_persisted_history(self) -> None:
@@ -295,6 +391,23 @@ class Brain:
                 if text:
                     return text[:120]
         return ""
+
+    def export_history(self, session_id: str, *, limit: int = 40) -> list[dict[str, str]]:
+        """User/assistant turns for HUD chat drawer (no tool dumps)."""
+        history = self._history.get(session_id) or []
+        out: list[dict[str, str]] = []
+        for item in history:
+            role = item.get("role")
+            content = item.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                continue
+            text = content.strip()
+            if not text:
+                continue
+            out.append({"role": str(role), "content": text[:4000]})
+        if limit > 0:
+            out = out[-limit:]
+        return out
 
     def _store(self, session_id: str, answer: str) -> str:
         clean = redact_secrets(answer, extra=secret_values(self.settings))
@@ -383,18 +496,32 @@ class Brain:
             return
 
         if not self.settings.has_llm:
-            answer = self._finish(self._local_answer(text))
-            self._store(session_id, answer)
-            yield answer
-            return
+            # One fresh probe — a stale miss must not trap the session in "sin Groq".
+            from jarvis.config import invalidate_ollama_ping
+
+            invalidate_ollama_ping()
+            if not self.settings.has_llm:
+                # Last resort: still try resolve_llm (falls back to Ollama when keys empty).
+                try:
+                    _ = self.endpoint
+                except RuntimeError:
+                    answer = self._finish(self._local_answer(text))
+                    self._store(session_id, answer)
+                    yield answer
+                    return
 
         small = is_small_local_model(self.settings, self.endpoint.model)
         actionish = bool(re.search(_ACTION_HINT, text, re.I))
         opinionish = bool(re.search(_OPINION_HINT, text, re.I))
+        schoolish = bool(re.search(_SCHOOL_HINT, text, re.I))
         factish = (
             (not actionish)
             and (not opinionish)
-            and bool(re.search(_FACT_HINT, text, re.I))
+            and (
+                bool(re.search(_FACT_HINT, text, re.I))
+                or schoolish
+                or _looks_like_question(text)
+            )
         )
         cap = 6 if actionish else (10 if small else MAX_HISTORY)
         history[:] = history[-cap:]
@@ -414,6 +541,7 @@ class Brain:
             lean=actionish and not small,
             client_surface=getattr(self.actions, "client_surface", "hud"),
             device_note=getattr(self.actions, "device_note", ""),
+            pc_hands=self.pc_hands,
         )
         # Action turns: trim chat context hard for lower TTFT.
         hist_for_llm = _trim_history_for_llm(history, keep=4 if actionish else cap)
@@ -445,11 +573,19 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "RESEARCH: this looks like a public fact / news / how-to question. "
-                        "If you are not certain from memory, call web_search NOW (Bing-fast). "
-                        "If results are thin, read_page the best URL. "
-                        "Never say you don't know without searching first. "
-                        "Answer short in Rioplatense with sources implied, not invented."
+                        "RESEARCH / HELP: this is a question, homework, explanation, or public fact. "
+                        "If you are not certain, call web_search or wikipedia NOW. "
+                        "For school help: explain step-by-step in clear Rioplatense, give a short example, "
+                        "then offer a practice question. Never invent citations. "
+                        "Never say you don't know without searching first when the topic is public."
+                        if schoolish
+                        else (
+                            "RESEARCH: public fact / news / how-to / general question. "
+                            "If you are not certain from memory, call web_search NOW. "
+                            "If results are thin, read_page the best URL or wikipedia. "
+                            "Never say you don't know without searching first. "
+                            "Answer short in Rioplatense; be useful, not theatrical."
+                        )
                     ),
                 },
             )
@@ -481,7 +617,7 @@ class Brain:
         elif factish:
             max_tokens = ACTION_MAX_TOKENS
             temperature = REASONING_TEMPERATURE
-            tool_rounds = 3  # search → maybe read_page → answer
+            tool_rounds = 2  # search → answer (read_page only if model asks)
         elif opinionish:
             # Opinions must not touch tools (avoids Groq tool_use_failed 400).
             max_tokens = SMALL_MAX_TOKENS
@@ -508,15 +644,24 @@ class Brain:
                         chat_kwargs["tool_choice"] = choice_mode
                     response = self._chat(messages, **chat_kwargs)
                 except Exception as exc:  # noqa: BLE001
-                    if choice_mode != "auto" and "tool_choice" in str(exc).lower() and tools:
-                        choice_mode = "auto"
-                        response = self._chat(
-                            messages,
-                            tools=tools,
-                            tool_choice="auto",
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                        )
+                    recovered = _recover_tool_provider_error(
+                        self,
+                        exc,
+                        messages=messages,
+                        tools=tools,
+                        choice_mode=choice_mode,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    if recovered is not None:
+                        response, tools, choice_mode, early = recovered
+                        if early is not None:
+                            answer = self._finish(early)
+                            yield answer
+                            self._store(session_id, answer)
+                            return
+                        if response is None:
+                            continue
                     elif is_tools_unsupported(exc) or (not tools and "tool" in str(exc).lower()):
                         raw_parts = []
                         for piece in self._iter_tokens(
@@ -597,12 +742,10 @@ class Brain:
                         history.append(tool_msg)
                         choice_mode = "auto"
                         continue
-                    if raw:
-                        yield redact_secrets(raw, extra=secret_values(self.settings))
                     answer = self._finish(raw)
                     if not answer:
                         answer = "Sistemas en línea, pero no armé una respuesta. Probá de nuevo."
-                        yield answer
+                    yield answer
                     self._store(session_id, answer)
                     return
 
@@ -654,43 +797,79 @@ class Brain:
 
             heal = on_llm_exception(self.settings, exc)
             hint = owner_hint(heal) if self.is_owner else ""
-            if is_missing_model_error(exc) or _is_soft_llm_failure(exc):
-                if _is_moderation_block(exc):
+            # Soft cloud failure → one silent retry on local Ollama when available.
+            if (
+                self.endpoint.label != "ollama"
+                and (
+                    is_missing_model_error(exc)
+                    or _is_soft_llm_failure(exc)
+                    or _is_tool_provider_glitch(exc)
+                )
+            ):
+                try:
+                    from jarvis.config import _ollama_reachable
+                    from jarvis.llm import _ollama_endpoint
+
+                    if _ollama_reachable(self.settings.ollama_base_url):
+                        self._endpoint = _ollama_endpoint(self.settings)
+                        # Fall through to a single local synthesis without tools.
+                        response = self._chat(
+                            [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Sos Ilaria. Respondé en el idioma del usuario, "
+                                        "corto y útil. Sin tools."
+                                    ),
+                                },
+                                {"role": "user", "content": text},
+                            ],
+                            temperature=0.3,
+                            max_tokens=400,
+                        )
+                        raw = (response.choices[0].message.content or "").strip()
+                        if raw:
+                            answer = self._finish(raw)
+                            self._store(session_id, answer)
+                            yield answer
+                            return
+                except Exception:  # noqa: BLE001
+                    pass
+            if is_missing_model_error(exc) or _is_soft_llm_failure(exc) or _is_tool_provider_glitch(exc):
+                if _is_moderation_block(exc) and not _is_tool_provider_glitch(exc):
                     answer = self._finish(
                         "Eso es gusto personal: no hay una verdad objetiva ahí. "
                         "Decime con qué criterio lo ves vos y lo charlamos en joda, sin pelear."
                     )
                 else:
-                    answer = self._finish(self._local_answer(text))
+                    answer = self._finish(self._rescue_from_error(text, exc))
                 if hint:
                     answer = f"{answer}\n{hint}"
                 self._store(session_id, answer)
                 yield answer
                 return
-            detail = redact_secrets(
-                str(exc).strip() or exc.__class__.__name__,
-                extra=secret_values(self.settings),
-            )
-            # Groq/OpenAI sometimes return bare 403 without soft markers — still recover.
-            if _is_moderation_block(exc) or "403" in detail:
-                answer = self._finish(
-                    "El proveedor del cerebro rechazó ese turno (filtro). "
-                    "Reformulá sin comparar personas y seguimos."
-                )
-                if hint:
-                    answer = f"{answer}\n{hint}"
-                self._store(session_id, answer)
-                yield answer
-                return
-            if self.is_owner:
-                who = (self.settings.user_name or "").strip() or "pá"
-                answer = f"{who}, se me trabó el cerebro local: {detail}"
-            else:
-                answer = f"Detecté una anomalía en el enlace cognitivo: {detail}"
-            if hint:
+            # Last resort: still answer — never dump raw provider anomalies to the user.
+            answer = self._finish(self._rescue_from_error(text, exc))
+            if self.is_owner and hint:
                 answer = f"{answer}\n{hint}"
             self._store(session_id, answer)
             yield answer
+
+
+def _looks_like_question(text: str) -> bool:
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if "?" in raw:
+        return True
+    lower = raw.lower()
+    starters = (
+        "qué ", "que ", "quién ", "quien ", "cómo ", "como ", "cuándo ", "cuando ",
+        "dónde ", "donde ", "por qué", "porque ", "cuánto ", "cuanto ",
+        "explic", "contame", "decime", "ayud", "resolv", "calcul",
+        "what ", "why ", "how ", "who ", "when ", "where ", "explain",
+    )
+    return any(lower.startswith(s) for s in starters) or len(raw.split()) >= 6
 
 
 def _trim_history_for_llm(history: list[dict[str, Any]], keep: int) -> list[dict[str, Any]]:
@@ -782,3 +961,218 @@ def _is_moderation_block(exc: BaseException) -> bool:
             "violat",
         )
     )
+
+
+def _is_tool_provider_glitch(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(
+        item in text
+        for item in (
+            "tool_use_failed",
+            "tool call validation failed",
+            "tool choice is required",
+            "did not call a tool",
+            "not in request.tools",
+            "failed_generation",
+        )
+    )
+
+
+def _failed_generation_text(exc: BaseException) -> str:
+    """Pull prose from Groq/OpenAI tool_use_failed payloads (not tool JSON)."""
+    blob = _raw_failed_generation(exc)
+    if not blob:
+        return ""
+    if blob.startswith("{") and '"name"' in blob:
+        return ""
+    return blob.strip()[:2000]
+
+
+def _raw_failed_generation(exc: BaseException) -> str:
+    raw = str(exc)
+    # Prefer the trailing failed_generation payload Groq embeds in the message.
+    for pattern in (
+        r"failed_generation['\"]?\s*[:=]\s*'((?:\\'|[^'])*)'",
+        r'failed_generation[\'"]?\s*[:=]\s*"((?:\\"|[^"])*)"',
+        r"failed_generation['\"]?\s*[:=]\s*(['\"])(.+?)\1",
+    ):
+        match = re.search(pattern, raw, re.S)
+        if not match:
+            continue
+        blob = match.group(match.lastindex or 1)
+        blob = (
+            blob.replace("\\n", "\n")
+            .replace("\\'", "'")
+            .replace('\\"', '"')
+            .replace("\\\\", "\\")
+            .strip()
+        )
+        if blob:
+            return blob
+    return ""
+
+
+def _failed_generation_tool(exc: BaseException) -> tuple[str, dict[str, Any]] | None:
+    raw = str(exc)
+    name_hit = re.search(r"call tool ['\"]([a-zA-Z0-9_]+)['\"]", raw)
+    tool_name = name_hit.group(1) if name_hit else ""
+    gen = _raw_failed_generation(exc)
+    if gen.startswith("{"):
+        try:
+            payload = json.loads(gen)
+            if isinstance(payload, dict) and payload.get("name"):
+                tool_name = str(payload.get("name") or tool_name)
+                args_raw = payload.get("arguments", {})
+                if isinstance(args_raw, str):
+                    try:
+                        args = json.loads(args_raw) if args_raw.strip() else {}
+                    except json.JSONDecodeError:
+                        # Sometimes arguments arrive already partially decoded.
+                        args = {}
+                        num = re.search(r"(?:value|level|percent)\D+(\d{1,3})", args_raw)
+                        if num:
+                            args["level"] = int(num.group(1))
+                elif isinstance(args_raw, dict):
+                    args = args_raw
+                else:
+                    args = {}
+                return tool_name, args if isinstance(args, dict) else {}
+        except json.JSONDecodeError:
+            num = re.search(r"(?:value|level|percent)\D+(\d{1,3})", gen)
+            if tool_name and num:
+                return tool_name, {"level": int(num.group(1))}
+    if tool_name:
+        # Last resort: pull a volume-like number from the whole exception text.
+        num = re.search(r"(?:value|level|percent)[\"'\s:=]+(\d{1,3})", raw)
+        args: dict[str, Any] = {"level": int(num.group(1))} if num else {}
+        return tool_name, args
+    return None
+
+
+def _recover_tool_provider_error(
+    brain: Any,
+    exc: BaseException,
+    *,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    choice_mode: str | dict[str, Any],
+    temperature: float,
+    max_tokens: int,
+) -> tuple[Any, list[dict[str, Any]], str | dict[str, Any], str | None] | None:
+    """Return (response, tools, choice_mode, early_answer) or None if not recoverable."""
+    if not _is_tool_provider_glitch(exc):
+        # Legacy: some providers reject tool_choice=required with that exact token.
+        if choice_mode != "auto" and "tool_choice" in str(exc).lower() and tools:
+            response = brain._chat(
+                messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response, tools, "auto", None
+        return None
+
+    prose = _failed_generation_text(exc)
+    if prose:
+        return None, tools, "auto", prose
+
+    parsed = _failed_generation_tool(exc)
+    if parsed:
+        tool_name, args = parsed
+        allowed = brain.allowed_tools
+        can_run = allowed is None or tool_name in allowed
+        if can_run:
+            result = brain.execute(tool_name, json.dumps(args, ensure_ascii=False))
+            fake_id = f"recover-{time.time_ns()}"
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": fake_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": fake_id,
+                    "content": result[:12000],
+                }
+            )
+            # Ensure the schema is present for the follow-up synthesis call.
+            present = {_tool_schema_name(item) for item in tools}
+            if tool_name not in present:
+                tools = list(tools) + schemas_for({tool_name})
+            try:
+                response = brain._chat(
+                    messages,
+                    tools=tools or None,
+                    tool_choice="auto" if tools else None,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            except TypeError:
+                kwargs: dict[str, Any] = {
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if tools:
+                    kwargs["tools"] = tools
+                    kwargs["tool_choice"] = "auto"
+                response = brain._chat(messages, **kwargs)
+            return response, tools, "auto", None
+        # Not allowed — expand tools if schema exists and member should have it after policy.
+        present = {_tool_schema_name(item) for item in tools}
+        if tool_name not in present:
+            extra = schemas_for({tool_name})
+            if extra and (allowed is None or tool_name in allowed or tool_name in MEMBER_SAFE_PC):
+                tools = list(tools) + extra
+                try:
+                    response = brain._chat(
+                        messages,
+                        tools=tools,
+                        tool_choice="auto",
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    return response, tools, "auto", None
+                except Exception:  # noqa: BLE001
+                    pass
+        return None, tools, "auto", (
+            f"No tengo permiso para «{tool_name}» con esta cuenta. "
+            "Pedile al dueño manos de PC en /admin, o usá una orden permitida."
+        )
+
+    if tools and choice_mode != "auto":
+        try:
+            response = brain._chat(
+                messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response, tools, "auto", None
+        except Exception:  # noqa: BLE001
+            return None, tools, "auto", (
+                "No pude completar esa acción en este turno. Probá de nuevo más corto."
+            )
+    return None, tools, "auto", (
+        "No pude completar esa acción en este turno. Probá de nuevo más corto."
+    )
+
+
+def _tool_schema_name(schema: dict[str, Any]) -> str:
+    try:
+        return str(schema["function"]["name"])
+    except (KeyError, TypeError):
+        return ""

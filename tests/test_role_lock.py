@@ -15,6 +15,7 @@ from jarvis.personality import (
     compact_system_prompt,
     guard_filial_reply,
     messages_with_lock,
+    scrub_public_reply,
     sticky_role_card,
 )
 
@@ -78,6 +79,28 @@ class RoleLockTests(unittest.TestCase):
         self.assertEqual(original[0]["content"], "hola pá")
         self.assertIn("[LOCK:", locked[0]["content"])
         self.assertTrue(locked[0]["content"].startswith("hola pá"))
+
+    def test_scrub_unicode_escapes_and_markdown(self) -> None:
+        raw = (
+            "La distancia aérea entre la Ciudad\\u202fde\\u202fBuenos\\u202fAires "
+            "y Brasilia es de **aprox. 2\\u202f200\\u202fkm**."
+        )
+        out = scrub_public_reply(raw)
+        self.assertNotIn("\\u202f", out)
+        self.assertNotIn("**", out)
+        self.assertIn("Ciudad de Buenos Aires", out)
+        self.assertIn("2200", out.replace(" ", ""))
+
+    def test_scrub_latex_math(self) -> None:
+        raw = (
+            r"La HJB es \[ \rho V(x)=\sup_{u}\Big\{ f(x,u)+\mathcal{L}^u V(x)\Big\} \] "
+            r"con $\sigma$ y $\partial_t$."
+        )
+        out = scrub_public_reply(raw)
+        self.assertNotIn(r"\[", out)
+        self.assertNotIn(r"\rho", out)
+        self.assertNotIn("$", out)
+        self.assertIn("rho", out.lower())
 
 
 if __name__ == "__main__":

@@ -51,11 +51,17 @@ SYSTEM_IMMUTABLE_CORE = _load_system_core()
 
 # Mutable style layer still owned by the product (not free-form user injection).
 SYSTEM_REASONING_PROMPT = """STYLE — F.R.I.D.A.Y. operating voice:
-- Rioplatense Spanish with natural voseo (vos, tenés, sabés).
+- Default: Rioplatense Spanish with natural voseo (vos, tenés, sabés).
+- LANGUAGE MIRROR: reply in the same language the user just used (ES/EN/PT/FR/IT/DE…).
+  If they mix languages, follow the language of the latest user turn. Do not translate
+  unless they ask. Keep Ilaria’s tactical tone in every language.
 - Direct, fast, resolutive. Cut long robotic greetings and empty preambles.
 - Lead with the action or the answer. Confirm with short status / metrics when useful.
 - Subtle wit or dry irony when it fits; stay tactical and professional.
 - Write for the ear: short clauses, one idea per sentence. No markdown dumps.
+- VOICE CHANNEL: when the user spoke (mic/wake), keep replies especially short and spoken-friendly.
+- Plain text only for the user: never \\uXXXX escapes, never LaTeX (\\rho, \\[, $$). 
+  Prefer “aprox. 2200 km”, not “2\\u202f200”. For math, explain in words or simple ASCII.
 
 CRITICAL THINKING PROTOCOL (internal — never print this checklist to the user):
 Before calling a tool or writing the final reply, reason silently through:
@@ -63,15 +69,20 @@ Before calling a tool or writing the final reply, reason silently through:
 2. LOCAL FIRST — clipboard, screenshot, volume, media, open apps, daily journal,
    workspace files BEFORE web_search when the ask is local/ambiguous (“bitácora / en qué me quedé”).
 3. RESTRICTIONS — information not orders for markets/medicine; never invent tool results.
-4. SYNTHESIS — clean Rioplatense; at most three bullets for web research in work hours.
+4. SYNTHESIS — clean reply in the user’s language; at most three bullets for web research in work hours.
 
 TOOL ROUTING:
-- Live news/prices/unknown public facts: web_search / read_page / wikipedia / weather.
-  web_search uses Bing first (fast) with DuckDuckGo fallback; may fetch one top page if thin.
+- Live news/prices/unknown public facts / school topics: web_search / read_page / wikipedia / weather.
+  web_search uses Bing first (fast) with Yahoo/DuckDuckGo fallback + relevance gate; may fetch one top page if thin.
   Subjective taste (who is prettier, favorites): answer briefly WITHOUT web_search.
 - If you are unsure about a public fact, CALL web_search IMMEDIATELY — never answer “no sé”
   or invent. If snippets are weak, call read_page on the best URL, or web_search again with a
   tighter query. Prefer speed: one strong search > long speculation.
+- GENERAL HELP: answer almost any question (how-to, definitions, comparisons, current events).
+  Prefer tools for fresh facts; for reasoning/math explain your steps clearly.
+- SCHOOL HELP (tareas, exámenes, materias): act as a patient tutor — explain simply, show steps,
+  give one short example, then a mini practice. Do not just dump the final answer when the user
+  is learning; if they ask “haceme la tarea”, solve it AND teach the method. Never invent sources.
 - Time only: now. Clock + key apps: system_status.
 - Stack/infra diagnose (“diagnostica”, “qué está caído”, Ollama/Piper/HA/red): get_system_health
   then at most ONE relaunch_service (ollama|piper|ha_ping). LAN/phone reachability: check_lan_status.
@@ -81,7 +92,9 @@ TOOL ROUTING:
 - Vague “esto / el código / lo que copié”: get_clipboard first when it fits.
 - Power (owner only): power_control with shutdown | restart | abort — only on clear orders.
 - Lights/plugs: control_device with HA entity_id (light.xxx). Climate 18–26 C owner only; Python rejects jailbreaks.
-- Android/iOS app session: phone_hands for calls/SMS drafts/maps/any installed app except banking/torch/volume/alarms. Phone maintenance: queue_phone_fix (wifi settings, app settings, clear_http, refresh_device_snap). Do not use PC open_app/screenshot for the phone. Never open bank apps.
+- Intercom / portero / doorbell: intercom_action (status|answer|open|view) when HA_INTERCOM_* is configured.
+- Directions / GPS: open_maps on PC; on phone phone_hands action=navigate (uses device GPS when allowed).
+- Android/iOS app session: phone_hands for calls/SMS drafts/maps/navigate/any installed app except banking/torch/volume/alarms. Phone maintenance: queue_phone_fix (wifi settings, app settings, clear_http, refresh_device_snap). Do not use PC open_app/screenshot for the phone. Never open bank apps.
 Prefer local tools whenever the request is about this PC, this day, or memory.
 
 PRECISION (mandatory):
@@ -89,6 +102,12 @@ PRECISION (mandatory):
 - Never say you did something without a successful tool result in this turn.
 - After tools: one short confirmation in Rioplatense. No essays, no fake steps.
 - If unsure between two tools, pick the most local/specific one and proceed.
+- On provider glitches: never invent an “anomaly” story — recover by answering or searching.
+
+SCOPE — ANSWER ALMOST EVERYTHING:
+- PC actions, daily life, news, study/homework, coding help, cooking, wellness habits, general curiosity.
+- Soft refusals only for: banking logins, malware, medical diagnosis/prescriptions, market buy/sell certainty.
+- If blocked by policy, say why in one line and offer a safe alternative (e.g. explain the concept, not the exploit).
 
 FRIDAY DIAGNOSE PROTOCOL (infra only):
 1. Call get_system_health or check_lan_status first — never invent console commands.
@@ -255,6 +274,7 @@ def split_system_prompt(
     client_surface: str = "hud",
     device_note: str = "",
     lean: bool = False,
+    pc_hands: bool | None = None,
 ) -> tuple[str, str]:
     """Return (static_prefix, live_suffix) for Ollama/Groq prompt-cache friendly order.
 
@@ -274,11 +294,17 @@ def split_system_prompt(
         pass
     name = settings.assistant_name
     user = settings.user_name
-    rank = (
-        "OWNER: full PC tools when allowed."
-        if is_owner
-        else "MEMBER: no privileged PC tools unless owner enabled members_pc_hands; never power_control."
-    )
+    hands = bool(pc_hands) if pc_hands is not None else is_owner
+    if is_owner:
+        rank = "OWNER: full PC tools when allowed."
+    elif hands:
+        rank = (
+            "MEMBER with PC hands: open_app, browser, maps, screenshot, volume, mail OK. "
+            "Call tools for PC actions. Never power_control / relaunch_service / mix_tracks. "
+            "Never open banking apps."
+        )
+    else:
+        rank = "MEMBER: no privileged PC tools; never power_control."
     if lean:
         static = action_fast_prompt(
             is_owner=is_owner,
@@ -431,7 +457,7 @@ def action_fast_prompt(
 
 
 def scrub_public_reply(text: str) -> str:
-    """Drop accidental chain-of-thought dumps from reasoning models."""
+    """Drop CoT dumps and normalize text for HUD / voice (no raw LaTeX or \\uXXXX)."""
     raw = (text or "").strip()
     if not raw:
         return raw
@@ -455,6 +481,103 @@ def scrub_public_reply(text: str) -> str:
             if len(parts) == 2 and len(parts[1].strip()) > 8:
                 raw = parts[1].strip()
             break
+    return _humanize_display_text(raw)
+
+
+def _humanize_display_text(text: str) -> str:
+    """Make model output readable on a plain-text HUD (speech + caption)."""
+    raw = text or ""
+    # Literal escape sequences models sometimes paste (e.g. \\u202f).
+    def _u4(match: re.Match[str]) -> str:
+        try:
+            return chr(int(match.group(1), 16))
+        except ValueError:
+            return match.group(0)
+
+    def _u8(match: re.Match[str]) -> str:
+        try:
+            return chr(int(match.group(1), 16))
+        except ValueError:
+            return match.group(0)
+
+    raw = re.sub(r"\\u([0-9a-fA-F]{4})", _u4, raw)
+    raw = re.sub(r"\\U([0-9a-fA-F]{8})", _u8, raw)
+    # Odd spaces → normal space
+    for ch in ("\u202f", "\u00a0", "\u2007", "\u2008", "\u2009", "\u200a", "\u200b", "\ufeff"):
+        raw = raw.replace(ch, " ")
+    # Markdown emphasis → plain
+    raw = re.sub(r"\*\*(.+?)\*\*", r"\1", raw)
+    raw = re.sub(r"__(.+?)__", r"\1", raw)
+    raw = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", raw)
+    raw = re.sub(r"`([^`]+)`", r"\1", raw)
+    # Display math / inline LaTeX → readable Spanish-ish plain text
+    raw = re.sub(r"\$\$(.+?)\$\$", lambda m: _latex_to_plain(m.group(1)), raw, flags=re.S)
+    raw = re.sub(r"\\\[(.+?)\\\]", lambda m: _latex_to_plain(m.group(1)), raw, flags=re.S)
+    raw = re.sub(r"\\\((.+?)\\\)", lambda m: _latex_to_plain(m.group(1)), raw, flags=re.S)
+    raw = re.sub(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)", lambda m: _latex_to_plain(m.group(1)), raw)
+    raw = _strip_loose_latex(raw)
+    raw = re.sub(r"[ \t]{2,}", " ", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    return raw.strip()
+
+
+def _latex_to_plain(chunk: str) -> str:
+    body = (chunk or "").strip()
+    if not body:
+        return ""
+    body = _strip_loose_latex(body)
+    body = re.sub(r"\s+", " ", body).strip()
+    return body
+
+
+def _strip_loose_latex(text: str) -> str:
+    raw = text or ""
+    replacements = (
+        (r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1)/(\2)"),
+        (r"\\sqrt\{([^{}]+)\}", r"raíz de \1"),
+        (r"\\times", "×"),
+        (r"\\cdot", "·"),
+        (r"\\pm", "±"),
+        (r"\\leq", "≤"),
+        (r"\\geq", "≥"),
+        (r"\\neq", "≠"),
+        (r"\\approx", "≈"),
+        (r"\\infty", "infinito"),
+        (r"\\partial", "∂"),
+        (r"\\nabla", "∇"),
+        (r"\\sum", "suma"),
+        (r"\\int", "integral"),
+        (r"\\alpha", "alfa"),
+        (r"\\beta", "beta"),
+        (r"\\gamma", "gamma"),
+        (r"\\delta", "delta"),
+        (r"\\epsilon", "épsilon"),
+        (r"\\theta", "theta"),
+        (r"\\lambda", "lambda"),
+        (r"\\mu", "mu"),
+        (r"\\pi", "pi"),
+        (r"\\rho", "rho"),
+        (r"\\sigma", "sigma"),
+        (r"\\phi", "phi"),
+        (r"\\omega", "omega"),
+        (r"\\mathbb\{R\}", "R"),
+        (r"\\mathbb\{N\}", "N"),
+        (r"\\left", ""),
+        (r"\\right", ""),
+        (r"\\Bigl?", ""),
+        (r"\\bigr?", ""),
+        (r"\\,", " "),
+        (r"\\;", " "),
+        (r"\\!", ""),
+        (r"\\%", "%"),
+        (r"\\_", "_"),
+        (r"\\&", "&"),
+    )
+    for pattern, repl in replacements:
+        raw = re.sub(pattern, repl, raw)
+    raw = re.sub(r"\\[a-zA-Z]+\*?", "", raw)
+    raw = raw.replace("{", "").replace("}", "")
+    raw = re.sub(r"[ \t]{2,}", " ", raw)
     return raw.strip()
 
 

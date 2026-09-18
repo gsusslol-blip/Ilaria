@@ -58,15 +58,33 @@ class KitchenTests(unittest.TestCase):
             self.assertGreaterEqual(int(result.get("count") or result.get("total") or 0), 4)
             print(f"[TEST OK] Atajo de cocina 'listar' verificado. Encontradas {result.get('count') or result.get('total')} recetas.")
 
-    def test_parser_missing_triggers_fallback(self) -> None:
+    def test_parser_missing_searches_web(self) -> None:
         raw = '{"tool":"kitchen_action","params":{"action":"buscar","comida":"sushi espacial"}}'
         with tempfile.TemporaryDirectory() as tmp:
             from unittest.mock import patch
 
             (Path(tmp) / "users" / "gsuss" / "workspace").mkdir(parents=True)
-            with patch("jarvis.brain_parser.DATA_DIR", Path(tmp)):
+
+            def fake_search(query: str, max_results: int = 5, *, workspace=None) -> str:
+                return (
+                    "Source: bing (2 hits).\n"
+                    "- Receta de sushi casero\n"
+                    "  https://example.com/sushi\n"
+                    "  Arroz, alga nori, pescado fresco y aguacate. Enrollar y cortar."
+                )
+
+            with (
+                patch("jarvis.brain_parser.DATA_DIR", Path(tmp)),
+                patch("jarvis.kitchen_manager._web_recipe_brief") as brief,
+            ):
+                brief.return_value = (
+                    "Receta de sushi espacial (búsqueda rápida):\n- Arroz y nori.",
+                    "hits",
+                )
                 result = parse_and_execute(raw, client_info="offline_test", current_user="gsuss")
-            self.assertEqual(result.get("status"), "trigger_llm_fallback")
+            self.assertEqual(result.get("status"), "success")
+            self.assertIn(result.get("source") or result.get("found_in"), {"web_search", "success"})
+            self.assertTrue(result.get("speakable"))
 
 
 if __name__ == "__main__":

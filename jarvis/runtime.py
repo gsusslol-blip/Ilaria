@@ -197,7 +197,10 @@ def main() -> None:
     accounts = AccountStore()
     if should_lock_owner():
         print(ensure_owner(accounts))
+    # Members get PC hands within policy (volume/apps/…; never power/banking).
+    accounts.set_meta("members_pc_hands", "1")
     state = AppState(settings, accounts)
+    state.drop_all_brains()
     url = public_url(settings.hud_port)
     from jarvis import __version__
     from jarvis.piper_tts import piper_available, piper_model

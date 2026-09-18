@@ -38,6 +38,7 @@ class User:
     role: str
     disabled: bool
     custom_tone: str = "equilibrado"
+    tts_voice: str = "ilaria"
 
     @property
     def is_owner(self) -> bool:
@@ -52,6 +53,7 @@ class User:
             "city": self.city,
             "packs": self.packs,
             "custom_tone": self.custom_tone,
+            "tts_voice": self.tts_voice,
             "has_own_key": bool(self.groq_key or self.openai_key or self.gemini_key),
             "role": self.role,
             "is_owner": self.is_owner,
@@ -120,7 +122,8 @@ class AccountStore:
 
     @property
     def members_pc_hands(self) -> bool:
-        return self.get_meta("members_pc_hands", "0") == "1"
+        # Default ON: members may use PC hands within policy (no power/banking/owner-only).
+        return self.get_meta("members_pc_hands", "1") == "1"
 
     def register(
         self,
@@ -204,7 +207,10 @@ class AccountStore:
         packs: list[str],
         groq_key: str | None,
         custom_tone: str | None = None,
+        tts_voice: str | None = None,
     ) -> User:
+        from jarvis.voices import normalize_voice_id
+
         with self._lock, self._connect() as db:
             row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             if row is None:
@@ -215,9 +221,15 @@ class AccountStore:
                 if custom_tone is not None
                 else (row["custom_tone"] if "custom_tone" in row.keys() else "equilibrado")
             )
+            current_voice = (
+                str(row["tts_voice"]) if "tts_voice" in row.keys() else "ilaria"
+            )
+            voice = normalize_voice_id(
+                tts_voice if tts_voice is not None else current_voice
+            )
             db.execute(
                 """
-                UPDATE users SET display_name=?, address_as=?, city=?, packs=?, groq_key=?, custom_tone=?
+                UPDATE users SET display_name=?, address_as=?, city=?, packs=?, groq_key=?, custom_tone=?, tts_voice=?
                 WHERE id=?
                 """,
                 (
@@ -227,6 +239,7 @@ class AccountStore:
                     json.dumps(packs, ensure_ascii=False),
                     key,
                     tone,
+                    voice,
                     user_id,
                 ),
             )
@@ -247,8 +260,9 @@ class AccountStore:
                 "display_name": "guest",
                 "address_as": "señor",
                 "city": "",
-                "packs": ["diario"],
+                "packs": ["diario", "estudio"],
                 "custom_tone": "equilibrado",
+                "tts_voice": "ilaria",
                 "is_owner": False,
                 "disabled": False,
                 "has_own_key": False,
@@ -483,6 +497,8 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0")
     if "custom_tone" not in cols:
         db.execute("ALTER TABLE users ADD COLUMN custom_tone TEXT NOT NULL DEFAULT 'equilibrado'")
+    if "tts_voice" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN tts_voice TEXT NOT NULL DEFAULT 'ilaria'")
     if "recovery_hash" not in cols:
         db.execute("ALTER TABLE users ADD COLUMN recovery_hash TEXT NOT NULL DEFAULT ''")
     if "recovery_salt" not in cols:
@@ -495,7 +511,13 @@ def _migrate(db: sqlite3.Connection) -> None:
     if db.execute("SELECT 1 FROM meta WHERE key='allow_signups'").fetchone() is None:
         db.execute("INSERT INTO meta(key, value) VALUES('allow_signups', '1')")
     if db.execute("SELECT 1 FROM meta WHERE key='members_pc_hands'").fetchone() is None:
-        db.execute("INSERT INTO meta(key, value) VALUES('members_pc_hands', '0')")
+        db.execute("INSERT INTO meta(key, value) VALUES('members_pc_hands', '1')")
+    # One-shot policy: enable PC hands for members within existing limits.
+    if db.execute("SELECT 1 FROM meta WHERE key='members_pc_hands_policy'").fetchone() is None:
+        db.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('members_pc_hands', '1')"
+        )
+        db.execute("INSERT INTO meta(key, value) VALUES('members_pc_hands_policy', '1')")
 
 
 def normalize_tone(raw: str | None) -> str:
@@ -561,6 +583,9 @@ def _row_to_user(row: sqlite3.Row) -> User:
     role = str(row["role"] if "role" in row.keys() else "member") or "member"
     disabled = int(row["disabled"] if "disabled" in row.keys() else 0) == 1
     tone = normalize_tone(str(row["custom_tone"]) if "custom_tone" in row.keys() else "equilibrado")
+    from jarvis.voices import normalize_voice_id
+
+    voice = normalize_voice_id(str(row["tts_voice"]) if "tts_voice" in row.keys() else "ilaria")
     return User(
         id=int(row["id"]),
         username=str(row["username"]),
@@ -574,4 +599,5 @@ def _row_to_user(row: sqlite3.Row) -> User:
         role=role,
         disabled=disabled,
         custom_tone=tone,
+        tts_voice=voice,
     )

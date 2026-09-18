@@ -18,10 +18,11 @@ from jarvis.actions import Actions
 from jarvis.config import Settings
 from jarvis.memory import Memory
 
-# Prefer Bing: in practice the fastest DDGS backend here; DDG is the fallback.
-_SEARCH_PRIMARY = "bing"
-_SEARCH_FALLBACK = "duckduckgo"
+# Fastest usable backend here is Bing (~300ms, high quality when healthy).
+# Bing can occasionally return junk — relevance gate falls through to Yahoo / DDG.
+_SEARCH_CHAIN = ("bing", "yahoo", "duckduckgo")
 _SEARCH_TIMEOUT_S = 4.0
+_SEARCH_REGION = "ar-es"
 
 
 def _fn(
@@ -132,9 +133,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _fn("google", "Open a Google search in the browser.", {"query": {"type": "string"}}, ["query"]),
     _fn(
         "open_maps",
-        "Open Google Maps directions in the browser.",
+        "Open Google Maps directions (GPS-aware when the client has location). "
+        "destination required; origin optional (lat,lng or place). "
+        "On phone sessions prefer phone_hands action=navigate instead.",
         {"destination": {"type": "string"}, "origin": {"type": "string"}},
         ["destination"],
+    ),
+    _fn(
+        "intercom_action",
+        "Building intercom / doorbell if linked in .env (HA_INTERCOM_*). "
+        "action: status | answer/atender (press button) | open/abrir door lock (owner) | "
+        "view/ver camera stream. Only works when configured — never invents devices.",
+        {
+            "action": {
+                "type": "string",
+                "description": "status | answer | open | view",
+            },
+        },
+        ["action"],
     ),
     _fn(
         "compose_whatsapp",
@@ -171,10 +187,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "kitchen_recipe",
-        "Local kitchen assistant (alias kitchen_action). "
-        "action=listar → catalog of local index + workspace receta_*.txt. "
-        "action=buscar (default) → lookup dish; if not found, generate short recipe and "
-        "call again with recipe_text to save as receta_<dish>.txt. No web_search unless asked.",
+        "Kitchen assistant (alias kitchen_action). "
+        "action=listar → local catalog. "
+        "action=buscar (default) → local first, then FAST web search; returns speakable recipe. "
+        "Optional recipe_text saves a custom recipe. Never tell the user to call tools.",
         {
             "action": {
                 "type": "string",
@@ -183,7 +199,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "dish": {"type": "string", "description": "Food / dish name (when buscar)"},
             "recipe_text": {
                 "type": "string",
-                "description": "Full recipe text when saving an LLM-authored recipe",
+                "description": "Optional full recipe text to save",
             },
         },
     ),
@@ -356,6 +372,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "open_app, torch, camera, gallery, settings, wifi, bluetooth, volume, share, "
         "clipboard, alarm, timer, calendar, contacts, email, "
         "open_wifi_settings, open_app_settings, clear_http, refresh_device_snap. "
+        "maps/navigate: destination place or address; phone uses GPS origin when permitted. "
         "target: phone number, place, URL, or any installed app name except banking apps, "
         "torch on/off, volume up/down/mute/0-100, alarm HH:MM, timer minutes. "
         "text: SMS/WhatsApp/share body. Never open bank/wallet banking apps. "
@@ -445,8 +462,46 @@ class _VisibleText(HTMLParser):
             self.parts.append(text)
 
 
+def _search_relevance(query: str, rows: list[dict[str, Any]]) -> float:
+    """0–1-ish score: how many query tokens appear in the top snippets."""
+    keys = [w.lower() for w in re.findall(r"[a-záéíóúñü0-9]{3,}", (query or "").lower())]
+    # Drop ultra-common Spanish fillers that inflate false matches.
+    stop = {
+        "que",
+        "qué",
+        "como",
+        "cómo",
+        "para",
+        "por",
+        "una",
+        "unos",
+        "unas",
+        "del",
+        "los",
+        "las",
+        "con",
+        "sin",
+        "hoy",
+        "entre",
+        "desde",
+        "hasta",
+        "sobre",
+        "http",
+        "https",
+        "www",
+    }
+    keys = [k for k in keys if k not in stop][:8]
+    if not keys or not rows:
+        return 0.0
+    hits = 0
+    for item in rows[:3]:
+        blob = f"{item.get('title') or ''} {item.get('body') or item.get('snippet') or ''}".lower()
+        hits += sum(1 for k in keys if k in blob)
+    return hits / max(len(keys), 1)
+
+
 def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) -> str:
-    """Bing-first live search (fast); DuckDuckGo fallback; one page extract if thin."""
+    """Bing-first live search (fast); Yahoo/DDG fallback if relevance is poor."""
     from jarvis.search_cache import format_hit, lookup, store
 
     q = " ".join((query or "").split())
@@ -464,6 +519,8 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     engine_used = ""
 
     def _take(rows: list[dict[str, Any]] | None, engine: str) -> None:
+        collected.clear()
+        seen.clear()
         for item in rows or []:
             href = str(item.get("href") or item.get("url") or "").strip()
             title = str(item.get("title") or "").strip()
@@ -477,20 +534,37 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     def _engine(backend: str) -> tuple[str, list[dict[str, Any]], str]:
         try:
             rows = DDGS(timeout=int(_SEARCH_TIMEOUT_S)).text(
-                q, max_results=limit, backend=backend
+                q,
+                max_results=limit,
+                backend=backend,
+                region=_SEARCH_REGION,
             )
             return backend, list(rows or []), ""
         except Exception as exc:  # noqa: BLE001
             return backend, [], f"{backend}: {exc}"
 
-    for backend in (_SEARCH_PRIMARY, _SEARCH_FALLBACK):
+    best_rows: list[dict[str, Any]] = []
+    best_engine = ""
+    best_score = -1.0
+    for backend in _SEARCH_CHAIN:
         eng, rows, err = _engine(backend)
         if err:
             errors.append(err)
-        if rows:
-            engine_used = eng
-            _take(rows, eng)
+        if not rows:
+            continue
+        score = _search_relevance(q, rows)
+        print(f"[SEARCH] {eng} score={score:.2f} n={len(rows)}")
+        if score > best_score:
+            best_score = score
+            best_rows = rows
+            best_engine = eng
+        # Good enough — stop early (Bing usually wins here).
+        if score >= 1.2:
             break
+
+    if best_rows:
+        engine_used = best_engine
+        _take(best_rows, best_engine)
 
     if not collected:
         detail = "; ".join(errors[:2]) if errors else "sin detalle"
@@ -501,14 +575,15 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     for item in collected:
         lines.append(f"- {item['title']}\n  {item['href']}\n  {item['body']}")
 
-    # One top page only when snippets are thin — keeps latency down.
-    thin = sum(1 for item in collected if len(item.get("body") or "") < 60)
+    # One top page only when snippets are very thin — short timeout to protect chat latency.
+    thin = sum(1 for item in collected if len(item.get("body") or "") < 40)
+    body_chars = sum(len(item.get("body") or "") for item in collected)
     top = next((item["href"] for item in collected if item.get("href")), "")
-    if thin and top:
+    if thin >= max(2, len(collected) // 2) and body_chars < 180 and top:
         try:
-            text = _read_page(top)
+            text = _read_page(top, timeout_s=3.5)
             if text and not text.startswith(("Fetch failed", "Invalid", "Empty", "Blocked")):
-                lines.append(f"\n--- Top page extract ---\nPage extract ({top}):\n{text[:1600]}")
+                lines.append(f"\n--- Top page extract ---\nPage extract ({top}):\n{text[:1200]}")
         except Exception as exc:  # noqa: BLE001
             lines.append(f"Page extract skipped: {exc}")
 
@@ -517,13 +592,13 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     return result
 
 
-def _read_page(url: str) -> str:
+def _read_page(url: str, timeout_s: float = 8.0) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "Invalid URL."
     headers = {"User-Agent": "Ilaria/1.5 personal-assistant"}
     try:
-        with httpx.Client(timeout=12.0, follow_redirects=True, headers=headers) as client:
+        with httpx.Client(timeout=float(timeout_s), follow_redirects=True, headers=headers) as client:
             response = client.get(url)
             if response.status_code in {401, 403, 429}:
                 return f"Blocked ({response.status_code}): the site refused the fetch. Use another result."
@@ -627,8 +702,9 @@ def make_executor(
         if name == "read_daily_journal":
             return actions.read_daily_journal()
         if name == "set_volume":
+            raw_level = args.get("level", args.get("value", args.get("percent", args.get("volumen"))))
             try:
-                level = int(float(args.get("level") or 0))
+                level = int(float(raw_level if raw_level is not None else 0))
             except (TypeError, ValueError):
                 return "Nivel de volumen: un numero de 0 a 100."
             return actions.set_volume(level)
@@ -681,6 +757,15 @@ def make_executor(
             return actions.google(str(args.get("query", "")))
         if name == "open_maps":
             return actions.open_maps(str(args.get("destination", "")), str(args.get("origin", "")))
+        if name == "intercom_action":
+            from jarvis.intercom import run_intercom
+
+            return run_intercom(
+                settings,
+                str(args.get("action") or "status"),
+                is_owner=bool(getattr(actions, "is_owner", False)),
+                open_url=lambda url: actions.open_browser(url),
+            )
         if name == "compose_whatsapp":
             return actions.compose_whatsapp(str(args.get("phone", "")), str(args.get("text", "")))
         if name == "open_app":
@@ -837,6 +922,8 @@ PC_TOOLS = {
     "purge_tts_cache",
     "backup_notes",
 }
+# Always available to members on the PC HUD (within policy). Still blocked on phone surfaces.
+MEMBER_SAFE_PC = frozenset({"set_volume", "media", "undo_last"})
 # webbrowser / PC shell openers — never expose these on phone surfaces
 PHONE_BLOCKED_TOOLS = PC_TOOLS | {
     "open_browser",
@@ -849,7 +936,7 @@ PHONE_BLOCKED_TOOLS = PC_TOOLS | {
     "get_system_health",
     "check_lan_status",
 }
-MEMBER_TOOLS = ALL_TOOL_NAMES - PC_TOOLS
+MEMBER_TOOLS = (ALL_TOOL_NAMES - PC_TOOLS) | MEMBER_SAFE_PC
 
 
 def schemas_for(allowed: set[str]) -> list[dict[str, Any]]:

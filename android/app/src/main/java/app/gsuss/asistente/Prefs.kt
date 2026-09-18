@@ -65,7 +65,7 @@ class Prefs(context: Context) {
         sp.edit()
             .remove("token")
             .apply()
-        solo = false
+        solo = true
     }
 
     var notesRev: Int

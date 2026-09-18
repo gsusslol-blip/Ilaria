@@ -362,7 +362,7 @@ def try_local_command(
                 if data.get("speakable"):
                     return str(data["speakable"])
                 if data.get("status") == "not_found":
-                    return str(data.get("message") or out)
+                    return str(data.get("speakable") or data.get("message") or out)
             except Exception:
                 pass
             return out
@@ -509,15 +509,29 @@ def try_local_command(
 
     maps = re.match(
         r"^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|llevame\s+a|ll[eé]vame\s+a|"
-        r"direcciones?\s+(?:a|para))\s+(.+)$",
+        r"direcciones?\s+(?:a|para)|naveg[aá]\s+(?:a|hacia)|gps\s+(?:a|hacia))\s+(.+)$",
         raw,
         re.I,
     )
     if maps:
         dest = maps.group(1).strip()
         if android:
-            return run("phone_hands", action="maps", target=dest)
+            return run("phone_hands", action="navigate", target=dest)
         return run("open_maps", destination=dest, origin="")
+
+    intercom = re.search(
+        r"\b(intercomunicador|portero|timbre(?:\s+de\s+la\s+puerta)?|doorbell|"
+        r"abrir\s+(?:el\s+)?portero|atender\s+(?:el\s+)?(?:timbre|portero|intercomunicador))\b",
+        lower,
+    )
+    if intercom:
+        if re.search(r"\b(ver|c[aá]mara|video|vista)\b", lower):
+            return run("intercom_action", action="view")
+        if re.search(r"\b(abrir\s+puerta|unlock|abrir\s+cerradura)\b", lower):
+            return run("intercom_action", action="open")
+        if re.search(r"\b(estado|status|configurado)\b", lower):
+            return run("intercom_action", action="status")
+        return run("intercom_action", action="answer")
 
     if re.fullmatch(r"https?://\S+", raw.strip(), re.I):
         url = raw.strip()
@@ -583,10 +597,9 @@ def local_reply(
     if hit is not None:
         return hit
     return (
-        "Modo local (sin key de Groq): clima, hora, cuentas, notas, timers, Wikipedia y búsqueda.\n"
-        "Ejemplos: «clima», «cuánto es 12*1.21», «anotá comprar leche», «timer 10 minutos», "
-        "«busca dólar blue».\n"
-        f"Para charlar de verdad, pegá una key gratis en Perfil: https://console.groq.com/keys"
+        "Todavía no armé una respuesta con el LLM. "
+        "Probá de nuevo en un segundo, o usá un comando directo "
+        "(«clima», «qué hora es», «busca …», «receta de …», «timer 10 minutos»)."
     )
 
 

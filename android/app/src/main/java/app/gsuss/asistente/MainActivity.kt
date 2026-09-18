@@ -16,10 +16,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -46,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +68,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         AlertNotify.ensureChannel(this)
-        val need = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
+        val need = mutableListOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+        )
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             need.add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -107,10 +117,13 @@ private fun AppRoot(prefs: Prefs) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Bg),
+            .background(Bg)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding(),
     ) {
         when (screen) {
-            "welcome" -> Column(Modifier.fillMaxSize().padding(20.dp)) {
+            "welcome" -> Column(Modifier = Modifier.fillMaxSize().padding(20.dp)) {
                 Welcome(prefs) { screen = "chat" }
             }
             "chat" -> Chat(
@@ -119,7 +132,7 @@ private fun AppRoot(prefs: Prefs) {
                 onProfile = { screen = "profile" },
                 onOut = { screen = "welcome" },
             )
-            "profile" -> Column(Modifier.fillMaxSize().padding(20.dp)) {
+            "profile" -> Column(Modifier = Modifier.fillMaxSize().padding(20.dp)) {
                 Profile(prefs, notes, onBack = { screen = "chat" })
             }
         }
@@ -129,7 +142,7 @@ private fun AppRoot(prefs: Prefs) {
 @Composable
 private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
     val context = LocalContext.current
-    var mode by remember { mutableStateOf("login") } // login | register
+    var mode by remember { mutableStateOf("solo") } // solo | login | register
     var user by remember { mutableStateOf(prefs.username) }
     var pass by remember { mutableStateOf("") }
     var name by remember { mutableStateOf(prefs.displayName) }
@@ -137,13 +150,43 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
     var err by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    Column(Modifier = Modifier.verticalScroll(rememberScrollState())) {
         Text("ILARIA", color = Pink, letterSpacing = 8.sp, modifier = Modifier.padding(bottom = 8.dp))
         Text(
-            "Funciona en el celular. La PC es opcional, para pensar más y sincronizar.",
+            "App independiente en tu celular. Pensá, anotá y abrí apps sin la PC. " +
+                "Si querés, más adelante sincronizás con Ilaria en la computadora.",
             color = Mute,
             fontSize = 14.sp,
             modifier = Modifier.padding(bottom = 16.dp),
+        )
+        Button(
+            onClick = {
+                err = ""
+                busy = true
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            prefs.enterSolo(user.ifBlank { "celular" })
+                            SoloTts.warm(context)
+                        }
+                        onIn()
+                    } catch (e: Exception) {
+                        err = e.message ?: "No pude abrir el modo celular."
+                    } finally {
+                        busy = false
+                    }
+                }
+            },
+            enabled = !busy,
+            colors = ButtonDefaults.buttonColors(containerColor = Pink, contentColor = Bg),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (busy && mode == "solo") "…" else "Empezar en el celular") }
+
+        Text(
+            "Sincronizar con la PC (opcional)",
+            color = Mute,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 28.dp, bottom = 8.dp),
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
@@ -153,7 +196,7 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                     contentColor = if (mode == "login") Bg else Color.White,
                 ),
                 modifier = Modifier.weight(1f),
-            ) { Text("Entrar") }
+            ) { Text("Enlazar PC") }
             Button(
                 onClick = { mode = "register"; err = "" },
                 colors = ButtonDefaults.buttonColors(
@@ -161,23 +204,25 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                     contentColor = if (mode == "register") Bg else Color.White,
                 ),
                 modifier = Modifier.weight(1f),
-            ) { Text("Crear cuenta") }
+            ) { Text("Crear en PC") }
         }
-        Field("Usuario", user) { user = it }
-        Field(
-            if (mode == "register") "Contraseña (mín. 8)" else "Contraseña (solo para la PC)",
-            pass,
-            password = true,
-        ) { pass = it }
-        if (mode == "register") {
-            Field("Tu nombre", name) { name = it }
-            Field("Ciudad", city) { city = it }
-            Text(
-                "Crea tu usuario en la PC de esta red Wi‑Fi. Después podés entrar con esos datos.",
-                color = Mute,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 8.dp),
-            )
+        if (mode == "login" || mode == "register") {
+            Field("Usuario", user) { user = it }
+            Field(
+                if (mode == "register") "Contraseña (mín. 8)" else "Contraseña de la PC",
+                pass,
+                password = true,
+            ) { pass = it }
+            if (mode == "register") {
+                Field("Tu nombre", name) { name = it }
+                Field("Ciudad", city) { city = it }
+                Text(
+                    "Crea la cuenta en la PC de esta Wi‑Fi. El celular sigue funcionando solo si la PC se apaga.",
+                    color = Mute,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
         if (err.isNotBlank()) Text(err, color = Color(0xFFFF5A6A), modifier = Modifier.padding(top = 8.dp))
         if (mode == "register") {
@@ -197,10 +242,10 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                                     password = pass,
                                     name = name.ifBlank { user },
                                     city = city,
-                                    packs = listOf("diario"),
+                                    packs = listOf("diario", "estudio"),
                                     groqKey = "",
                                 )
-                                prefs.solo = true
+                                prefs.solo = false
                             }
                             onIn()
                         } catch (e: Exception) {
@@ -211,32 +256,10 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                     }
                 },
                 enabled = !busy,
-                colors = ButtonDefaults.buttonColors(containerColor = Pink, contentColor = Bg),
+                colors = ButtonDefaults.buttonColors(containerColor = Pink.copy(alpha = 0.85f), contentColor = Bg),
                 modifier = Modifier.padding(top = 16.dp).fillMaxWidth(),
             ) { Text(if (busy) "…" else "Crear cuenta y sincronizar") }
-        } else {
-            Button(
-                onClick = {
-                    err = ""
-                    busy = true
-                    scope.launch {
-                        try {
-                            withContext(Dispatchers.IO) {
-                                prefs.enterSolo(user)
-                                SoloTts.warm(context)
-                            }
-                            onIn()
-                        } catch (e: Exception) {
-                            err = e.message ?: "No pude abrir el modo celular."
-                        } finally {
-                            busy = false
-                        }
-                    }
-                },
-                enabled = !busy,
-                colors = ButtonDefaults.buttonColors(containerColor = Pink, contentColor = Bg),
-                modifier = Modifier.padding(top = 16.dp).fillMaxWidth(),
-            ) { Text(if (busy) "…" else "Usar en el celular") }
+        } else if (mode == "login") {
             Button(
                 onClick = {
                     err = ""
@@ -249,7 +272,7 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                             withContext(Dispatchers.IO) {
                                 prefs.baseUrl = resolvePc(context, prefs)
                                 Brain(prefs).login(user, pass)
-                                prefs.solo = true
+                                prefs.solo = false
                             }
                             onIn()
                         } catch (e: Exception) {
@@ -261,8 +284,8 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
                 },
                 enabled = !busy,
                 colors = ButtonDefaults.buttonColors(containerColor = Pink.copy(alpha = 0.85f), contentColor = Bg),
-                modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
-            ) { Text(if (busy) "…" else "Entrar y sincronizar con la PC") }
+                modifier = Modifier.padding(top = 16.dp).fillMaxWidth(),
+            ) { Text(if (busy) "…" else "Enlazar y sincronizar") }
         }
     }
 }
@@ -320,7 +343,7 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                     val local = PhoneLocal.handle(context, text, notes, prefs)
                     if (local != null) {
                         local
-                    } else if (prefs.token.isNotBlank() && brain.heartbeat()) {
+                    } else if (!prefs.solo && prefs.token.isNotBlank() && brain.heartbeat()) {
                         brain.replyStream(text, speak = true, DeviceSnap.json(context)) { token ->
                             scope.launch(Dispatchers.Main.immediate) {
                                 caption += token
@@ -328,7 +351,12 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                             }
                         }
                     } else {
-                        ChatOut(PhoneLocal.fallback(prefs, linked = false))
+                        ChatOut(
+                            PhoneLocal.fallback(
+                                prefs,
+                                linked = prefs.token.isNotBlank() && !prefs.solo,
+                            ),
+                        )
                     }
                 } catch (e: Exception) {
                     val local = PhoneLocal.handle(context, text, notes, prefs)
@@ -416,8 +444,8 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
     LaunchedEffect(Unit) {
         val welcome = withContext(Dispatchers.IO) {
             try {
-                if (prefs.token.isNotBlank() && brain.heartbeat()) brain.welcome()
-                else "Estoy en el celular, ${prefs.displayName.ifBlank { prefs.username }.ifBlank { "hola" }}. Cuando la PC esté en el Wi-Fi, sincronizamos."
+                if (!prefs.solo && prefs.token.isNotBlank() && brain.heartbeat()) brain.welcome()
+                else "Estoy en el celular, ${prefs.displayName.ifBlank { prefs.username }.ifBlank { "hola" }}. Independiente; sincronizá con la PC cuando quieras."
             } catch (e: Exception) {
                 "Estoy en el celular. ${e.message ?: ""}".trim()
             }
@@ -430,12 +458,14 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
         mood = OrbMood.Speak
         hideCaptionLater()
     }
-    Box(Modifier.fillMaxSize().navigationBarsPadding()) {
+    val density = LocalDensity.current
+    val imeOpen = WindowInsets.ime.getBottom(density) > 0
+    Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             if (!pcLinked) {
                 Text(
                     if (prefs.token.isBlank()) {
-                        "Modo celular · en Perfil podés enlazar la PC y sincronizar notas"
+                        "Modo independiente · en Perfil podés sincronizar con la PC cuando quieras"
                     } else {
                         "PC fuera de alcance · sigo en el celular. Tocá para buscarla."
                     },
@@ -472,7 +502,7 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                 Text("ILARIA", color = Pink, letterSpacing = 6.sp)
                 Row {
                     TextButton(onClick = { feedOpen = !feedOpen }) {
-                        Text(if (feedOpen) "Orbe" else "Chat", color = Pink)
+                        Text(if (feedOpen) "Orbe" else "Ver chat", color = Pink)
                     }
                     TextButton(onClick = onProfile) { Text("Perfil", color = Pink) }
                     TextButton(
@@ -491,11 +521,28 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                     ) { Text("Salir", color = Pink) }
                 }
             }
-            Spacer(Modifier.weight(1f))
+            if (feedOpen) {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                ) {
+                    items(log) { bubble ->
+                        Text(
+                            bubble.text,
+                            color = if (bubble.mine) Color(0xFFC9D6DA) else Pink,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        )
+                    }
+                }
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -504,6 +551,7 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                     onValueChange = { input = it },
                     modifier = Modifier.weight(1f),
                     enabled = !busy,
+                    singleLine = true,
                     placeholder = { Text("Escribí o decí Ilaria…", color = Mute) },
                     colors = fieldColors(),
                 )
@@ -519,48 +567,35 @@ private fun Chat(prefs: Prefs, notes: NotesCache, onProfile: () -> Unit, onOut: 
                 ) { Text(if (busy) "…" else "OK") }
             }
         }
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 12.dp, bottom = 96.dp, start = 40.dp),
-            horizontalAlignment = Alignment.End,
-        ) {
-            if (showCaption && caption.isNotBlank()) {
-                Text(
-                    caption,
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    modifier = Modifier
-                        .padding(bottom = 16.dp)
-                        .background(Color(0x33FFFFFF), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                )
-            }
-            IlariaOrb(
-                mood = mood,
-                voice = if (busy) 0f else voice,
-            )
-            Text(
-                "Siempre oye. Recién reacciona si decís Ilaria.",
-                color = Mute,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
-        if (feedOpen) {
-            LazyColumn(
+        // Orb sits above the composer; hide while typing so the keyboard never covers the field.
+        if (!imeOpen && !feedOpen) {
+            Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 88.dp, bottom = 96.dp, start = 16.dp, end = 16.dp)
-                    .background(Color(0xE60B0B0B)),
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 96.dp, start = 40.dp),
+                horizontalAlignment = Alignment.End,
             ) {
-                items(log) { bubble ->
+                if (showCaption && caption.isNotBlank()) {
                     Text(
-                        bubble.text,
-                        color = if (bubble.mine) Color(0xFFC9D6DA) else Pink,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        caption,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        modifier = Modifier
+                            .padding(bottom = 16.dp)
+                            .background(Color(0x33FFFFFF), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                     )
                 }
+                IlariaOrb(
+                    mood = mood,
+                    voice = if (busy) 0f else voice,
+                )
+                Text(
+                    "Siempre oye. Recién reacciona si decís Ilaria.",
+                    color = Mute,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
     }
@@ -578,13 +613,19 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
     var ok by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         TextButton(onClick = onBack) { Text("← Chat", color = Pink) }
         Text(
-            "El celular funciona solo. La PC es opcional para el cerebro grande y las notas compartidas.",
+            "El celular es independiente. Sincronizar con la PC es opcional (cerebro grande + notas compartidas).",
             color = Mute,
             fontSize = 13.sp,
             modifier = Modifier.padding(bottom = 8.dp),
+        )
+        Text(
+            "Sincronizar con la PC (opcional)",
+            color = Pink,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )
         Field("URL de la PC", host) { host = it }
         Field("Bot Telegram (sin @)", prefs.telegramBot) { prefs.telegramBot = it }
@@ -665,14 +706,14 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
                                     password = pass,
                                     name = name.ifBlank { user },
                                     city = city,
-                                    packs = listOf("diario"),
+                                    packs = listOf("diario", "estudio"),
                                     groqKey = "",
                                 )
                                 notes.syncWith(brain)
-                                prefs.solo = true
+                                prefs.solo = false
                             }
                             creating = false
-                            ok = "Cuenta creada y sincronizada."
+                            ok = "Cuenta creada. Celular + PC sincronizados."
                         } catch (e: Exception) {
                             err = e.message ?: "No pude crear la cuenta."
                         }
@@ -696,9 +737,9 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
                                 val brain = Brain(prefs)
                                 brain.login(user, pass)
                                 notes.syncWith(brain)
-                                prefs.solo = true
+                                prefs.solo = false
                             }
-                            ok = "Sincronizada con la PC."
+                            ok = "Sincronizado. El celular sigue andando si la PC se apaga."
                         } catch (e: Exception) {
                             err = e.message ?: "No pude enlazar."
                         }
@@ -706,7 +747,7 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Pink, contentColor = Bg),
                 modifier = Modifier.padding(top = 8.dp),
-            ) { Text("Enlazar y sincronizar") }
+            ) { Text("Sincronizar con la PC") }
         }
         Button(
             onClick = {
@@ -727,6 +768,36 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
             colors = ButtonDefaults.buttonColors(containerColor = Pink, contentColor = Bg),
             modifier = Modifier.padding(top = 8.dp),
         ) { Text("Sincronizar ahora") }
+        if (prefs.token.isNotBlank()) {
+            Text(
+                if (prefs.solo) {
+                    "Sincronización en pausa: usás solo el celular."
+                } else {
+                    "Sincronización activa con la PC."
+                },
+                color = Mute,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Button(
+                onClick = {
+                    prefs.solo = !prefs.solo
+                    ok = if (prefs.solo) {
+                        "Solo celular. La PC queda enlazada por si querés volver."
+                    } else {
+                        "Sincronización con PC reactivada."
+                    }
+                    err = ""
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Pink.copy(alpha = 0.35f),
+                    contentColor = Color.White,
+                ),
+                modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
+            ) {
+                Text(if (prefs.solo) "Reactivar sync con PC" else "Pausar sync (solo celular)")
+            }
+        }
         Button(
             onClick = {
                 prefs.baseUrl = host
@@ -746,11 +817,11 @@ private fun Profile(prefs: Prefs, notes: NotesCache, onBack: () -> Unit) {
                                 prefs.unlinkPc()
                             }
                         }
-                        ok = "PC desconectada. Sigo en el celular."
+                        ok = "PC desconectada. Seguís independiente en el celular."
                     }
                 }
             },
-        ) { Text("Desconectar PC", color = Mute) }
+        ) { Text("Dejar de sincronizar (solo celular)", color = Mute) }
     }
 }
 

@@ -73,15 +73,25 @@ def piper_exe() -> Path | None:
     return None
 
 
-def piper_model() -> Path | None:
+def piper_model(name: str | None = None) -> Path | None:
+    preferred = (name or "").strip()
+    if preferred:
+        for folder in _voice_dirs():
+            found = _existing_file(folder / preferred)
+            if found is not None:
+                return found
+        # Allow absolute / relative env-style paths.
+        found = _resolve_file(preferred)
+        if found is not None:
+            return found
     env = (os.getenv("PIPER_MODEL") or "").strip()
     if env:
         found = _resolve_file(env)
         if found is not None:
             return found
     for folder in _voice_dirs():
-        for name in _FALLBACK_MODELS:
-            found = _existing_file(folder / name)
+        for fname in _FALLBACK_MODELS:
+            found = _existing_file(folder / fname)
             if found is not None:
                 return found
     for folder in _voice_dirs():
@@ -242,9 +252,9 @@ def reset_piper_session() -> None:
         _drop_session()
 
 
-def synthesize_wav(text: str, dest: Path) -> Path:
+def synthesize_wav(text: str, dest: Path, *, model_name: str | None = None) -> Path:
     exe = piper_exe()
-    model = piper_model()
+    model = piper_model(model_name)
     if exe is None or model is None:
         raise RuntimeError("Piper binary or ONNX voice missing (bin/piper + data/tts).")
     try:

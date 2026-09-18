@@ -39,19 +39,24 @@ PACKS: dict[str, Pack] = {
     ),
     "estudio": Pack(
         id="estudio",
-        title="Estudio",
-        blurb="Materias, Wikipedia, timers de foco y resúmenes.",
+        title="Estudio / escuela",
+        blurb="Tareas, materias, resúmenes, exámenes y tutor paso a paso.",
         facts={
             "perfil": "estudiante",
             "metodo_foco": "pomodoro 25/5 salvo que pida otro",
+            "ayuda_escolar": "explicar + ejemplo + práctica; no solo la respuesta final",
         },
         notes=(
             "Materia / tema / próximo examen / duda",
-            "Pedime: ‘explicame X como si tuviera 15’ o un timer de 25 minutos.",
+            "Pedime: ‘explicame X como si tuviera 15’, ‘resolvé este ejercicio’, o un timer de 25 minutos.",
+            "También: resumen, cuestionario, diferencias entre conceptos, ayuda con la tarea.",
         ),
         style=(
-            "Study / academic mode: concept maps, long-text summaries, practice quizzes from "
-            "local notes when possible. Prefer Wikipedia + search for sources. Offer focus timers."
+            "School / study tutor mode: clear Rioplatense explanations for primary, secondary, "
+            "and early university. Break problems into steps, show one worked example, then a "
+            "short practice question. Prefer Wikipedia + web_search for factual topics. "
+            "Offer focus timers. Never invent bibliography. If the user only wants the answer, "
+            "give it briefly and still add a one-line method tip."
         ),
     ),
     "trabajo": Pack(
@@ -165,7 +170,7 @@ def normalize_pack_ids(raw: list[str] | None) -> list[str]:
         if key in PACKS and key not in chosen:
             chosen.append(key)
     if not chosen:
-        chosen = ["diario"]
+        chosen = ["diario", "estudio"]
     return chosen
 
 
@@ -185,7 +190,8 @@ def resolve_focus_pack(enabled: list[str], requested: str = "", message: str = "
     lower = (message or "").lower()
     keywords: list[tuple[str, tuple[str, ...]]] = [
         ("programacion", ("código", "codigo", "bug", "python", "cursor", "vscode", "refactor", "compile")),
-        ("estudio", ("estudi", "examen", "materia", "resumen", "cuestionario", "universidad")),
+        ("estudio", ("estudi", "examen", "materia", "resumen", "cuestionario", "universidad",
+                     "tarea", "deber", "colegio", "escuela", "parcial", "ejercicio", "matem")),
         ("trading", ("dólar", "dolar", "btc", "eth", "vela", "broker", "cotiz", "mercado")),
         ("trabajo", ("mail", "correo", "reunión", "reunion", "minuta", "oficina", "cliente")),
         ("hogar", ("super", "compra", "cocina", "limpieza", "horno", "casa")),
@@ -215,7 +221,7 @@ def get_user_pack_prompt(
     role_line = (
         "Role: OWNER — full PC tools when the host grants them."
         if user_role == "owner"
-        else "Role: member — helpful assistant; privileged PC tools only if the owner enabled members_pc_hands."
+        else "Role: member — PC hands within policy (volume/apps OK; never power/banking)."
     )
     return (
         f"{role_line}\n"

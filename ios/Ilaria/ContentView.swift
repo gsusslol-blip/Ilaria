@@ -77,8 +77,10 @@ struct ContentView: View {
                 .environmentObject(prefs)
         }
         .onAppear {
+            if !prefs.inSession { prefs.enterSolo() }
             if brain == nil { brain = Brain(prefs: prefs) }
             UIDevice.current.isBatteryMonitoringEnabled = true
+            status = prefs.loggedIn && !prefs.solo ? "sync PC" : "independiente"
         }
     }
 
@@ -114,7 +116,7 @@ struct ContentView: View {
             }
             log.append(Bubble(mine: false, text: out.text))
             SoloTts.speak(out.text)
-            status = out.fromPc ? "PC" : "local"
+            status = out.fromPc ? "PC" : "independiente"
         } catch {
             if let local = PhoneLocal.handle(raw: text, prefs: prefs) {
                 for item in local.phone { _ = PhoneHands.run(item) }
@@ -137,7 +139,21 @@ struct ProfileSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("PC en la LAN") {
+                Section {
+                    Text("El iPhone es independiente. Sincronizar con la PC es opcional (cerebro grande + notas compartidas).")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Celular (siempre)") {
+                    TextField("Tu nombre", text: $prefs.displayName)
+                    TextField("Usuario", text: $prefs.username)
+                        .textInputAutocapitalization(.never)
+                    Button("Usar solo el iPhone") {
+                        prefs.enterSolo(user: prefs.username)
+                        info = "Independiente. La PC no hace falta."
+                    }
+                }
+                Section("Sincronizar con la PC (opcional)") {
                     TextField("http://192.168.x.x:8787", text: $prefs.baseUrl)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -174,23 +190,26 @@ struct ProfileSheet: View {
                             info = "Pedí SYNC al bot y tocá ilaria://sync en la respuesta."
                         }
                     }
-                    TextField("usuario", text: $user)
+                    TextField("usuario PC", text: $user)
                         .textInputAutocapitalization(.never)
-                    SecureField("clave", text: $pass)
-                    Button("Entrar") {
+                    SecureField("clave PC", text: $pass)
+                    Button("Sincronizar con la PC") {
                         Task {
                             do {
                                 let name = try await Brain(prefs: prefs).login(user: user, password: pass)
-                                info = "Hola, \(name)"
                                 prefs.solo = false
+                                info = "Sincronizado, \(name). El iPhone sigue andando si la PC se apaga."
                             } catch {
                                 info = error.localizedDescription
                             }
                         }
                     }
-                    Toggle("Modo solo (sin PC)", isOn: $prefs.solo)
                     if prefs.loggedIn {
-                        Button("Salir", role: .destructive) { prefs.logout() }
+                        Toggle("Pausar sync (solo iPhone)", isOn: $prefs.solo)
+                        Button("Dejar de sincronizar", role: .destructive) {
+                            prefs.logout()
+                            info = "PC desconectada. Seguís independiente."
+                        }
                     }
                 }
                 if !info.isEmpty {

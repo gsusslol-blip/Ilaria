@@ -17,11 +17,12 @@ _OLLAMA_PING_AT: float = 0.0
 _OLLAMA_PING_OK: bool = False
 
 
-def _ollama_reachable(base_url: str, timeout: float = 0.35) -> bool:
-    """Cached ping so /api/me does not stall. Fail-closed if Ollama is down."""
+def _ollama_reachable(base_url: str, timeout: float = 1.2) -> bool:
+    """Cached ping for /api/me. Remember OK longer; retry fails quickly."""
     global _OLLAMA_PING_AT, _OLLAMA_PING_OK
     now = time.monotonic()
-    if now - _OLLAMA_PING_AT < 8.0:
+    ttl = 30.0 if _OLLAMA_PING_OK else 2.0
+    if now - _OLLAMA_PING_AT < ttl:
         return _OLLAMA_PING_OK
     _OLLAMA_PING_AT = now
     raw = (base_url or "http://127.0.0.1:11434/v1").rstrip("/")
@@ -37,6 +38,13 @@ def _ollama_reachable(base_url: str, timeout: float = 0.35) -> bool:
             continue
     _OLLAMA_PING_OK = False
     return False
+
+
+def invalidate_ollama_ping() -> None:
+    """Clear cache so the next has_llm / resolve_llm re-probes Ollama."""
+    global _OLLAMA_PING_AT, _OLLAMA_PING_OK
+    _OLLAMA_PING_AT = 0.0
+    _OLLAMA_PING_OK = False
 
 
 def bundle_dir() -> Path:
@@ -115,16 +123,19 @@ class Settings:
     faster_whisper_model: str = "base"
     whisper_device: str = "cpu"
     tts_provider: str = "piper"
+    # Relative onnx filename under data/tts when provider=piper (per-user voice).
+    piper_model_name: str = ""
+    voice_id: str = "ilaria"
 
     @property
     def has_llm(self) -> bool:
-        if self.llm_provider in {"ollama", "llamacpp"}:
-            return True
+        """True when any chat backend can answer — cloud key OR live Ollama."""
         if self.groq_api_key or self.openai_api_key or self.gemini_api_key:
             return True
-        if self.llm_provider == "auto":
-            return _ollama_reachable(self.ollama_base_url)
-        return False
+        if self.llm_provider in {"ollama", "llamacpp"}:
+            return True
+        # auto / cloud-without-key / empty → Ollama if the daemon answers.
+        return _ollama_reachable(self.ollama_base_url)
 
     @property
     def has_stt(self) -> bool:

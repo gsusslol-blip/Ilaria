@@ -203,7 +203,11 @@ class Actions:
     def wikipedia(self, topic: str) -> str:
         title = quote(topic.strip().replace(" ", "_"))
         url = f"https://es.wikipedia.org/api/rest_v1/page/summary/{title}"
-        headers = {"User-Agent": "Ilaria/1.3.5 personal-assistant"}
+        # Wikimedia requires a descriptive User-Agent (403 if browser-like or too vague).
+        headers = {
+            "User-Agent": "IlariaLocalAssistant/1.5 (https://localhost; personal-assistant)",
+            "Accept": "application/json",
+        }
         try:
             with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
                 response = client.get(url)
@@ -274,12 +278,19 @@ class Actions:
         return self.app_search_action(browser="brave", platform="google", query=query)
 
     def open_maps(self, destination: str, origin: str = "") -> str:
-        params = {"api": "1", "destination": destination.strip()}
-        if origin.strip():
-            params["origin"] = origin.strip()
+        dest = destination.strip()
+        if not dest:
+            return "Decime a dónde querés ir."
+        params: dict[str, str] = {"api": "1", "destination": dest, "travelmode": "driving"}
+        origin_clean = origin.strip()
+        if origin_clean:
+            params["origin"] = origin_clean
+        # Without origin, Google Maps uses the device GPS when the browser allows it.
         url = "https://www.google.com/maps/dir/?" + urlencode(params)
         webbrowser.open(url)
-        return f"Opened maps: {destination.strip()}"
+        if origin_clean:
+            return f"Mapas: ruta de {origin_clean} a {dest}."
+        return f"Mapas: direcciones a {dest} (origen = GPS del dispositivo si está permitido)."
 
     def compose_whatsapp(self, phone: str, text: str) -> str:
         digits = _phone_digits(phone)
@@ -378,8 +389,12 @@ class Actions:
             data = json.loads(result)
             if data.get("status") == "success" and data.get("source") == "local_db":
                 self.daily_journal(f"Consulta de cocina: {data.get('receta', {}).get('nombre') or comida}")
-            elif data.get("status") == "success" and data.get("source") == "llm_generated":
-                self.daily_journal(f"Receta generada y guardada: {comida}")
+            elif data.get("status") == "success" and data.get("source") in {
+                "llm_generated",
+                "web_search",
+                "workspace_file",
+            }:
+                self.daily_journal(f"Receta ({data.get('source')}): {comida}")
         except Exception:
             pass
         return result

@@ -71,8 +71,8 @@ enum PhoneLocal {
                 return hands("whatsapp", target: parts[0].filter(\.isNumber), text: parts[1], reply: "WhatsApp borrador.")
             }
         }
-        if let maps = match(#"(?i)^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|ll[eé]vame\s+a)\s+(.+)$"#, text) {
-            return hands("maps", target: maps, reply: "Mapas.")
+        if let maps = match(#"(?i)^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|ll[eé]vame\s+a|naveg[aá]\s+(?:a|hacia))\s+(.+)$"#, text) {
+            return hands("navigate", target: maps, reply: "Te armo la ruta.")
         }
         if lower.hasPrefix("anotá ") || lower.hasPrefix("anota ") || lower.hasPrefix("nota:") {
             let body = text.replacingOccurrences(of: #"(?i)^(?:anot[aá]|nota[:\s]+)\s*"#, with: "", options: .regularExpression)
@@ -107,7 +107,7 @@ enum PhoneLocal {
     static func fallback(prefs: Prefs, linked: Bool) -> String {
         let who = prefs.displayName.isEmpty ? (prefs.username.isEmpty ? "vos" : prefs.username) : prefs.displayName
         if linked { return "No pude completar eso en el iPhone. Probá de nuevo." }
-        return "Estoy en el iPhone, \(who). Apps, notas y linterna van acá. Enlazá la PC (mismo Wi‑Fi) en Perfil."
+        return "Estoy en el iPhone, \(who) — independiente de la PC. Apps, notas y linterna van acá. Si querés, en Perfil sincronizás con la PC (mismo Wi‑Fi)."
     }
 
     private static func hands(_ action: String, target: String = "", text: String = "", reply: String) -> ChatOut {
