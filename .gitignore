@@ -14,7 +14,8 @@ android/.gradle/
 android/app/build/
 android/local.properties
 android/keystore.properties
-secrets/
+secrets/*
+!secrets/.gitkeep
 *.jks
 *.keystore
 .android-sdk/
