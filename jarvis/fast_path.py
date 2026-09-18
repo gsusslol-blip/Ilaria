@@ -144,6 +144,68 @@ def match_fast_path(
             return "phone_hands", {"action": "screenshot"}, "screenshot"
         return "screenshot", {}, "screenshot"
 
+    # Deep-link: "abrí brave y poné youtube una canción de yzy"
+    if not _phone(surf):
+        m = re.search(
+            r"(?:abr[ií]|abra|abrir)\s+(brave|chrome|edge|chromium)\s+"
+            r"(?:y\s+)?(?:pon(?:eme|[eé])?|ponga|busc[aá]r?|reproduc[ií])\s+"
+            r"(?:en\s+)?(youtube|yt|ytmusic|google|spotify)\s+"
+            r"(?:una\s+canci[oó]n\s+(?:de\s+)?|algo\s+(?:de\s+)?|a\s+|de\s+)?"
+            r"(.+)$",
+            lower,
+        )
+        if m:
+            query = m.group(3).strip(" .")
+            if 1 < len(query) <= 80:
+                return (
+                    "app_search_action",
+                    {
+                        "browser": m.group(1),
+                        "platform": m.group(2),
+                        "query": query,
+                    },
+                    "app_search_open",
+                )
+
+        # "poné / buscá en youtube|spotify …"
+        m = re.fullmatch(
+            r"(?:pon(?:eme|[eé])?|ponga|reproduc[ií]|play|busc[aá]r?)\s+"
+            r"(?:en\s+)?(youtube|yt|ytmusic|spotify)\s+"
+            r"(?:una\s+canci[oó]n\s+(?:de\s+)?|algo\s+(?:de\s+)?|a\s+|de\s+)?"
+            r"(.+)",
+            lower,
+        )
+        if m:
+            query = m.group(2).strip(" .")
+            if 1 < len(query) <= 80:
+                return (
+                    "app_search_action",
+                    {
+                        "browser": "brave",
+                        "platform": m.group(1),
+                        "query": query,
+                    },
+                    "app_search_music",
+                )
+
+        # "youtube: artist" / "canción de X en youtube"
+        m = re.fullmatch(
+            r"(?:canci[oó]n\s+de\s+|tema\s+de\s+)?(.+?)\s+en\s+(youtube|yt|spotify)",
+            lower,
+        )
+        if m:
+            query = m.group(1).strip(" .")
+            if 1 < len(query) <= 80 and not re.search(r"\b(qu[eé]|por\s+qu[eé]|pens[aá])\b", query):
+                return (
+                    "app_search_action",
+                    {
+                        "browser": "brave",
+                        "platform": m.group(2),
+                        "query": query,
+                    },
+                    "app_search_en",
+                )
+
     return None
 
 

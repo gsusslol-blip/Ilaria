@@ -58,6 +58,11 @@ _APPS: dict[str, list[str]] = {
         r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
         r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
     ],
+    "brave": [
+        r"%LocalAppData%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%ProgramFiles%\BraveSoftware\Brave-Browser\Application\brave.exe",
+        r"%ProgramFiles(x86)%\BraveSoftware\Brave-Browser\Application\brave.exe",
+    ],
     "firefox": [r"%ProgramFiles%\Mozilla Firefox\firefox.exe"],
     "spotify": [
         r"%AppData%\Spotify\Spotify.exe",
@@ -217,15 +222,29 @@ class Actions:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return "Invalid URL. Need http(s)."
-        webbrowser.open(url)
-        return f"Opened browser: {url}"
+        return _launch_url(url, browser="")
 
-    def play_music(self, query: str, platform: str = "youtube") -> str:
-        """Play a track: YouTube search URL, or Spotify app + optional UI control."""
+    def play_music(self, query: str, platform: str = "youtube", browser: str = "") -> str:
+        """Deep-link music search into preferred browser / Spotify (no keyboard macros)."""
+        return self.app_search_action(
+            browser=browser or "brave",
+            platform=platform or "youtube",
+            query=query,
+        )
+
+    def app_search_action(
+        self,
+        browser: str = "brave",
+        platform: str = "youtube",
+        query: str = "",
+    ) -> str:
+        """Open browser/app directly on a search URL (Fast-Path friendly)."""
         q = " ".join((query or "").split())
         if not q:
-            return "Decime qué canción, artista o playlist querés escuchar."
+            return "Decime qué buscar o qué canción querés."
         plat = (platform or "youtube").strip().lower()
+        brow = (browser or "brave").strip().lower() or "brave"
+
         if "spotify" in plat:
             opened = _open_spotify_app()
             if _spotify_ui_enabled():
@@ -235,7 +254,7 @@ class Actions:
                 os.startfile("spotify:search:" + quote(q))  # type: ignore[attr-defined]
             except OSError:
                 url = "https://open.spotify.com/search/" + quote(q)
-                webbrowser.open(url)
+                _launch_url(url, browser=brow)
             if opened:
                 return (
                     f"Abrí Spotify con la búsqueda de {q}. "
@@ -245,14 +264,14 @@ class Actions:
                 f"Abrí la búsqueda de {q} en Spotify. "
                 "Si la app está instalada, debería abrir sola."
             )
-        url = "https://www.youtube.com/results?search_query=" + quote(q)
-        webbrowser.open(url)
-        return f"Reproduciendo {q} en YouTube, pá. Abrí la búsqueda en el navegador."
+
+        url = _search_url(plat, q)
+        launched = _launch_url(url, browser=brow)
+        label = "YouTube" if "youtube" in plat or plat in {"yt", "ytmusic"} else plat.title()
+        return f"{launched} · {label}: {q}"
 
     def google(self, query: str) -> str:
-        url = "https://www.google.com/search?q=" + quote(query.strip())
-        webbrowser.open(url)
-        return f"Opened Google for: {query.strip()}"
+        return self.app_search_action(browser="brave", platform="google", query=query)
 
     def open_maps(self, destination: str, origin: str = "") -> str:
         params = {"api": "1", "destination": destination.strip()}
@@ -772,6 +791,86 @@ class Actions:
 
 
 _CREATE_NO_WINDOW = 0x08000000
+
+
+def _search_url(platform: str, query: str) -> str:
+    plat = (platform or "youtube").strip().lower()
+    q = quote(query.strip())
+    if plat in {"google", "web", "buscar"}:
+        return "https://www.google.com/search?q=" + q
+    if plat in {"ytmusic", "youtube music", "youtubemusic"}:
+        return "https://music.youtube.com/search?q=" + q
+    if "spotify" in plat:
+        return "https://open.spotify.com/search/" + q
+    # Default YouTube results (deep-link friendly)
+    return "https://www.youtube.com/results?search_query=" + q
+
+
+def _resolve_browser_exe(browser: str) -> str | None:
+    key = (browser or "").strip().lower()
+    aliases = {
+        "": "brave",
+        "default": "brave",
+        "navegador": "brave",
+        "chromium": "chrome",
+        "google": "chrome",
+        "msedge": "edge",
+    }
+    key = aliases.get(key, key) or "brave"
+    paths = list(_APPS.get(key) or [])
+    if key == "edge":
+        paths = [
+            r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+            r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+        ]
+    for item in paths:
+        expanded = os.path.expandvars(item)
+        if os.path.isabs(expanded) and Path(expanded).is_file():
+            return expanded
+        found = shutil.which(item) or shutil.which(Path(expanded).name)
+        if found:
+            return found
+    # PATH short names (brave/chrome sometimes registered)
+    for cand in (key, f"{key}.exe"):
+        found = shutil.which(cand)
+        if found:
+            return found
+    return None
+
+
+def _launch_url(url: str, *, browser: str = "") -> str:
+    """Open http(s) URL in a specific browser via exe deep-link (async, non-blocking)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return "URL inválida."
+    exe = _resolve_browser_exe(browser)
+    if exe and sys.platform == "win32":
+        try:
+            subprocess.Popen(  # noqa: S603
+                [exe, url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            label = Path(exe).stem
+            return f"Abrí {label} → {url}"
+        except OSError:
+            pass
+    if sys.platform == "win32" and (browser or "").strip().lower() in {"brave", "chrome", "edge", ""}:
+        cmd = (browser or "brave").strip().lower() or "brave"
+        try:
+            subprocess.Popen(  # noqa: S602
+                f'start "" {cmd} "{url}"',
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return f"Abrí {cmd} → {url}"
+        except OSError:
+            pass
+    webbrowser.open(url)
+    return f"Abrí el navegador → {url}"
+
 
 _WATCH_PROCS = {
     "chrome.exe": "Google Chrome",

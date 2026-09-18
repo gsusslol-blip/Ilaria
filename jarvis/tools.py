@@ -144,7 +144,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "open_app",
-        "Open a PC app: chrome, edge, firefox, notepad, calculadora, paint, explorer, "
+        "Open a PC app: chrome, edge, brave, firefox, notepad, calculadora, paint, explorer, "
         "spotify, discord, whatsapp, telegram, cursor, vscode, word, excel, steam, "
         "taskmgr, terminal, powershell, snip/recortes, configuracion, wifi, bluetooth, sonido. "
         "Also resolves Start Menu shortcuts by name.",
@@ -278,8 +278,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "play_music",
-        "Play or search a song/artist/playlist. YouTube search URL, or Spotify app + search URL. "
-        "Use when the user asks to hear music (poneme, reproducí, Spotify, YouTube, Cerati, etc.).",
+        "Play or search a song/artist/playlist via deep-link URL (no keyboard macros). "
+        "YouTube/Brave by default, or Spotify app. "
+        "Use when the user asks to hear music (poneme, reproducí, YouTube, Cerati, etc.).",
         {
             "query": {
                 "type": "string",
@@ -287,8 +288,29 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
             "platform": {
                 "type": "string",
-                "description": "youtube (default) or spotify",
+                "description": "youtube (default) | ytmusic | spotify",
             },
+            "browser": {
+                "type": "string",
+                "description": "brave (default) | chrome | edge",
+            },
+        },
+        ["query"],
+    ),
+    _fn(
+        "app_search_action",
+        "Open Brave/Chrome/Edge directly on a search URL (YouTube, Google, YT Music, Spotify web). "
+        "Prefer this for 'abrí brave y poné youtube …' — zero keyboard macros, Fast-Path friendly.",
+        {
+            "browser": {
+                "type": "string",
+                "description": "brave | chrome | edge (default brave)",
+            },
+            "platform": {
+                "type": "string",
+                "description": "youtube | ytmusic | google | spotify",
+            },
+            "query": {"type": "string", "description": "Search / song / artist string"},
         },
         ["query"],
     ),
@@ -714,7 +736,14 @@ def make_executor(
         if name == "play_music":
             return actions.play_music(
                 str(args.get("query", "")),
-                str(args.get("platform", "youtube") or "youtube"),
+                platform=str(args.get("platform", "youtube") or "youtube"),
+                browser=str(args.get("browser", "") or ""),
+            )
+        if name == "app_search_action":
+            return actions.app_search_action(
+                browser=str(args.get("browser", "brave") or "brave"),
+                platform=str(args.get("platform", "youtube") or "youtube"),
+                query=str(args.get("query", "") or args.get("busqueda", "")),
             )
         if name == "send_email":
             return actions.send_email(
@@ -793,6 +822,7 @@ PC_TOOLS = {
     "screenshot",
     "media",
     "play_music",
+    "app_search_action",
     "set_volume",
     "undo_last",
     "send_email",

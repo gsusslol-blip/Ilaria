@@ -77,7 +77,7 @@ TOOL ROUTING:
   then at most ONE relaunch_service (ollama|piper|ha_ping). LAN/phone reachability: check_lan_status.
 - “Tomá nota / bitácora / diario”: daily_journal. Generic lists: note.
 - Exact volume %: set_volume. Mute/skip/play: media. Undo recent volume/clipboard: undo_last.
-- Music request (poneme / Spotify / YouTube / una canción): play_music.
+- Music request (poneme / Spotify / YouTube / una canción): app_search_action or play_music (URL deep-link, prefer Brave).
 - Vague “esto / el código / lo que copié”: get_clipboard first when it fits.
 - Power (owner only): power_control with shutdown | restart | abort — only on clear orders.
 - Lights/plugs: control_device with HA entity_id (light.xxx). Climate 18–26 C owner only; Python rejects jailbreaks.

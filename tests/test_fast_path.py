@@ -45,6 +45,23 @@ class FastPathTests(unittest.TestCase):
         self.assertEqual(match_fp("siguiente")[0], "media")  # type: ignore[index]
         self.assertEqual(match_fp("pause")[0], "media")  # type: ignore[index]
 
+    def test_app_search_brave_youtube(self) -> None:
+        hit = match_fp("abrí brave y poné youtube una canción de yzy a")
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit[0], "app_search_action")
+        self.assertEqual(hit[1].get("browser"), "brave")
+        self.assertEqual(hit[1].get("platform"), "youtube")
+        self.assertIn("yzy", hit[1].get("query", ""))
+
+    def test_app_search_poneme_youtube(self) -> None:
+        hit = match_fp("poné en youtube cerati crimson")
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit[0], "app_search_action")
+        self.assertEqual(hit[1].get("platform"), "youtube")
+        self.assertIn("cerati", hit[1].get("query", ""))
+
     def test_wake_prefix_stripped(self) -> None:
         hit = match_fp("hey ilaria volumen al 40")
         self.assertIsNotNone(hit)
