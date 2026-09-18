@@ -561,7 +561,7 @@ class Actions:
         except Exception as exc:  # noqa: BLE001
             return f"No pude cambiar el volumen: {exc}"
         self.last_action_label = f"volumen {value}%"
-        return f"Volumen al {value}%. Decí deshacer si te arrepentís."
+        return f"Volumen al {value}%."
 
     def get_clipboard(self) -> str:
         """Read Windows clipboard; PowerShell first, ctypes CF_UNICODETEXT as fallback."""
@@ -656,7 +656,17 @@ class Actions:
         if vk is None:
             return f"Unknown media action. Use: {', '.join(_VK)}"
         _press_vk(vk)
-        return f"Media: {action}"
+        labels = {
+            "mute": "Silenciado.",
+            "vol_up": "Volumen ajustado.",
+            "vol_down": "Volumen ajustado.",
+            "next": "Siguiente.",
+            "prev": "Anterior.",
+            "play_pause": "Listo.",
+            "stop": "Listo.",
+        }
+        key = action.strip().lower()
+        return labels.get(key, "Listo.")
 
     def system_status(self) -> str:
         from jarvis.packs import format_local_when

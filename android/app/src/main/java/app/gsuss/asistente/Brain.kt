@@ -165,6 +165,8 @@ class Brain(private val prefs: Prefs) {
         val acc = StringBuilder()
         var reply = ""
         var audio = ""
+        var earlyAudio = ""
+        var skipFull = false
         var phone = listOf<JSONObject>()
         var failure: Exception? = null
         fun finish() {
@@ -186,6 +188,14 @@ class Brain(private val prefs: Prefs) {
                             onToken(piece)
                         }
                     }
+                    "early_audio" -> {
+                        val url = payload.optString("audio_url")
+                        val preview = payload.optString("text")
+                        if (url.isNotBlank() && preview.length in 1..120) {
+                            earlyAudio = url
+                            playUrl(url)
+                        }
+                    }
                     "error" -> {
                         failure = IllegalStateException(
                             payload.optString("detail").ifBlank { "Error en el stream." },
@@ -195,6 +205,7 @@ class Brain(private val prefs: Prefs) {
                     "done" -> {
                         reply = payload.optString("reply").ifBlank { acc.toString() }
                         audio = payload.optString("audio_url")
+                        skipFull = payload.optBoolean("skip_full_tts", false)
                         phone = phoneActions(payload)
                         eventSource.cancel()
                         finish()
@@ -233,7 +244,15 @@ class Brain(private val prefs: Prefs) {
         if (!ok) throw IllegalStateException("La PC no terminó de hablar a tiempo.")
         failure?.let { throw it }
         val text = reply.ifBlank { acc.toString() }.ifBlank { "Sin respuesta." }
-        playUrl(audio)
+        if (!(skipFull && earlyAudio.isNotBlank())) {
+            if (audio.isNotBlank() && audio != earlyAudio) {
+                playUrl(audio)
+            } else if (audio.isBlank() && earlyAudio.isBlank()) {
+                // no PC audio
+            } else if (!skipFull && audio.isNotBlank()) {
+                playUrl(audio)
+            }
+        }
         return ChatOut(text, phone, fromPc = true)
     }
 

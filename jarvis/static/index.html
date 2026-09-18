@@ -895,6 +895,8 @@
     let mime = "";
     let sessionToken = "";
     let pushTalk = false;
+    let playGen = 0;
+    let floatBuf = null;
 
     const waveform = document.getElementById("waveform");
     function syncWave() {
@@ -1034,16 +1036,18 @@
     }
 
     function rms() {
-      // Client-side VAD for HUD Libre. Server Silero/RMS VAD runs on wake WAV before Whisper.
+      // Client-side VAD for HUD Libre. Float domain = better speech vs music gate.
       if (!analyser) return 0;
-      const data = new Uint8Array(analyser.fftSize);
-      analyser.getByteTimeDomainData(data);
+      if (!floatBuf || floatBuf.length !== analyser.fftSize) {
+        floatBuf = new Float32Array(analyser.fftSize);
+      }
+      analyser.getFloatTimeDomainData(floatBuf);
       let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
+      for (let i = 0; i < floatBuf.length; i++) {
+        const v = floatBuf[i];
         sum += v * v;
       }
-      return Math.sqrt(sum / data.length);
+      return Math.sqrt(sum / floatBuf.length);
     }
 
     // Ambient floor so music/speakers do not look like speech onset.
@@ -1073,25 +1077,51 @@
         return;
       }
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
       });
       audioCtx = new AudioContext();
       await audioCtx.resume();
       const src = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.35;
       src.connect(analyser);
       mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
     }
 
+    function releaseMic() {
+      try {
+        if (recorder && recorder.state !== "inactive") recorder.stop();
+      } catch (e) {}
+      recorder = null;
+      try {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+      stream = null;
+      analyser = null;
+      floatBuf = null;
+      try {
+        if (audioCtx) audioCtx.close();
+      } catch (e) {}
+      audioCtx = null;
+    }
+
     function stopVoice() {
+      playGen += 1;
       try { voiceEl.pause(); } catch (e) {}
       voiceEl.removeAttribute("src");
+      try { voiceEl.load(); } catch (e) {}
       if (voiceUrl) {
         URL.revokeObjectURL(voiceUrl);
         voiceUrl = "";
       }
       if (window.speechSynthesis) window.speechSynthesis.cancel();
+      speaking = false;
     }
 
     function speakBrowser(text, done) {
@@ -1109,20 +1139,22 @@
     async function speak(text) {
       const clipped = (text || "").trim().slice(0, 1800);
       if (!clipped) return;
+      const gen = ++playGen;
       speaking = true;
       setOrb("speaking");
       let finished = false;
       const done = () => {
-        if (finished) return;
+        if (finished || gen !== playGen) return;
         finished = true;
         speaking = false;
         lastTalk = Date.now();
         voiceEl.onended = null;
         voiceEl.onerror = null;
-        stopVoice();
+        if (gen === playGen) stopVoice();
         setOrb(handsFree ? "listening" : "");
       };
       stopVoice();
+      playGen = gen;
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
@@ -1130,15 +1162,16 @@
           body: JSON.stringify({ text: clipped }),
         });
         if (!res.ok) throw new Error("tts");
+        if (gen !== playGen) return;
         const blob = await res.blob();
         voiceUrl = URL.createObjectURL(blob);
         voiceEl.src = voiceUrl;
         voiceEl.onended = done;
-        voiceEl.onerror = () => speakBrowser(clipped, done);
+        voiceEl.onerror = () => { if (gen === playGen) speakBrowser(clipped, done); };
         await voiceEl.play();
         setTimeout(done, Math.min(60000, 2500 + clipped.length * 80));
       } catch (e) {
-        speakBrowser(clipped, done);
+        if (gen === playGen) speakBrowser(clipped, done);
       }
     }
 
@@ -1147,28 +1180,34 @@
         await speak(fallbackText || "");
         return;
       }
+      const gen = ++playGen;
       speaking = true;
       setOrb("speaking");
       let finished = false;
       const done = () => {
-        if (finished) return;
+        if (finished || gen !== playGen) return;
         finished = true;
         speaking = false;
         lastTalk = Date.now();
         voiceEl.onended = null;
         voiceEl.onerror = null;
-        stopVoice();
+        if (gen === playGen) stopVoice();
         setOrb(handsFree ? "listening" : "");
       };
-      stopVoice();
+      try { voiceEl.pause(); } catch (e) {}
+      if (voiceUrl) {
+        URL.revokeObjectURL(voiceUrl);
+        voiceUrl = "";
+      }
       try {
         voiceEl.src = withAuthToken(url);
         voiceEl.onended = done;
-        voiceEl.onerror = () => speak(fallbackText || "");
+        voiceEl.onerror = () => { if (gen === playGen) speak(fallbackText || ""); };
+        if (gen !== playGen) return;
         await voiceEl.play();
         setTimeout(done, 60000);
       } catch (e) {
-        await speak(fallbackText || "");
+        if (gen === playGen) await speak(fallbackText || "");
       }
     }
 
@@ -1197,10 +1236,62 @@
 
     let lastSttErr = 0;
 
+    async function setHudListening(active) {
+      try {
+        await fetch("/api/wake/hud-listening", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active: !!active }),
+        });
+      } catch (e) {}
+    }
+
+    function downsampleBuffer(buffer, fromRate, toRate) {
+      if (fromRate === toRate) return buffer;
+      const ratio = fromRate / toRate;
+      const newLen = Math.round(buffer.length / ratio);
+      const result = new Float32Array(newLen);
+      for (let i = 0; i < newLen; i++) {
+        const idx = Math.min(buffer.length - 1, Math.floor(i * ratio));
+        result[i] = buffer[idx];
+      }
+      return result;
+    }
+
+    function encodeWavMono16(samples, sampleRate) {
+      const n = samples.length;
+      const buffer = new ArrayBuffer(44 + n * 2);
+      const view = new DataView(buffer);
+      const writeStr = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + n * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, n * 2, true);
+      let offset = 44;
+      for (let i = 0; i < n; i++) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        offset += 2;
+      }
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
     async function transcribe(blob, { quiet = false } = {}) {
-      if (!blob || blob.size < 1200) return "";
+      if (!blob || blob.size < 800) return "";
       const fd = new FormData();
-      fd.append("file", blob, mime.includes("mp4") ? "audio.mp4" : "audio.webm");
+      const name = (blob.type || "").includes("wav") ? "audio.wav" : (mime.includes("mp4") ? "audio.mp4" : "audio.webm");
+      fd.append("file", blob, name);
       try {
         const res = await fetch("/api/stt", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
@@ -1223,48 +1314,73 @@
     }
 
     async function recordUtterance(maxMs) {
-      chunks = [];
-      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-      recorder.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
-      recorder.start(200);
+      await setHudListening(true);
+      const targetRate = 16000;
+      const srcRate = (audioCtx && audioCtx.sampleRate) || 48000;
+      const collected = [];
+      let heard = false;
+      let quiet = 0;
+      const endQuietMs = musicLikely() ? 450 : 700;
+      const forceEndMs = musicLikely() ? 2800 : 4000;
+      const started = Date.now();
       mic.classList.add("hot");
       setLive(handsFree ? "escuchando — decí Ilaria" : "escuchando", true);
       setOrb("listening");
-      const started = Date.now();
-      let heard = false;
-      let quiet = 0;
-      const endQuietMs = musicLikely() ? 450 : 900;
-      const forceEndMs = musicLikely() ? 3200 : 4500;
-      while (Date.now() - started < maxMs) {
-        await sleep(80);
-        const level = rms();
-        noteAmbient(level);
-        orb.style.setProperty("--voice", Math.min(1, level / 0.12).toFixed(3));
-        if (waveform) {
-          const bars = waveform.querySelectorAll(".wave-bar");
-          const v = Math.min(1, level / 0.1);
-          bars.forEach((bar, i) => {
-            bar.style.height = (8 + v * (18 + (i % 3) * 10)).toFixed(1) + "px";
-          });
+
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      const muteGain = audioCtx.createGain();
+      muteGain.gain.value = 0;
+      const micSrc = audioCtx.createMediaStreamSource(stream);
+      micSrc.connect(processor);
+      processor.connect(muteGain);
+      muteGain.connect(audioCtx.destination);
+      processor.onaudioprocess = (ev) => {
+        collected.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+      };
+
+      try {
+        while (Date.now() - started < maxMs) {
+          await sleep(80);
+          const level = rms();
+          noteAmbient(level);
+          orb.style.setProperty("--voice", Math.min(1, level / 0.12).toFixed(3));
+          if (waveform) {
+            const bars = waveform.querySelectorAll(".wave-bar");
+            const v = Math.min(1, level / 0.1);
+            bars.forEach((bar, i) => {
+              bar.style.height = (8 + v * (18 + (i % 3) * 10)).toFixed(1) + "px";
+            });
+          }
+          const voice = musicLikely() ? speechOnset(level) : level > 0.04;
+          if (voice) {
+            heard = true;
+            quiet = 0;
+          } else if (heard) {
+            quiet += 80;
+            if (quiet >= endQuietMs) break;
+          } else if (Date.now() - started > forceEndMs) {
+            break;
+          }
         }
-        // Music keeps RMS high; only count clear speech onset as "heard".
-        const voice = musicLikely() ? speechOnset(level) : level > 0.045;
-        if (voice) {
-          heard = true;
-          quiet = 0;
-        } else if (heard) {
-          quiet += 80;
-          if (quiet >= endQuietMs) break;
-        } else if (Date.now() - started > forceEndMs) {
-          break;
-        }
+      } finally {
+        try { processor.disconnect(); } catch (e) {}
+        try { micSrc.disconnect(); } catch (e) {}
+        try { muteGain.disconnect(); } catch (e) {}
+        mic.classList.remove("hot");
+        await setHudListening(false);
       }
-      await new Promise((resolve) => {
-        recorder.onstop = resolve;
-        try { recorder.stop(); } catch (e) { resolve(); }
-      });
-      mic.classList.remove("hot");
-      return new Blob(chunks, { type: recorder.mimeType || mime || "audio/webm" });
+
+      if (!heard || !collected.length) return { blob: null, heard: false };
+      let total = 0;
+      for (const chunk of collected) total += chunk.length;
+      const merged = new Float32Array(total);
+      let off = 0;
+      for (const chunk of collected) {
+        merged.set(chunk, off);
+        off += chunk.length;
+      }
+      const down = downsampleBuffer(merged, srcRate, targetRate);
+      return { blob: encodeWavMono16(down, targetRate), heard: true };
     }
 
     async function send(text) {
@@ -1329,9 +1445,14 @@
               log.scrollTop = log.scrollHeight;
             }
             if (eventName === "early_audio" && data.audio_url && !earlyPlaying) {
-              earlyPlaying = true;
-              setLive("hablando…", true);
-              playAudioUrl(data.audio_url, data.text || "").catch(() => {});
+              // Play early only for short confirms; long replies wait for skip/full.
+              const preview = (data.text || "").trim();
+              const looksShort = preview.length > 0 && preview.length <= 120;
+              if (looksShort) {
+                earlyPlaying = true;
+                setLive("hablando…", true);
+                playAudioUrl(data.audio_url, preview).catch(() => {});
+              }
             }
             if (eventName === "error") {
               el.textContent = humanizeDisplayText(data.detail || "Error en el stream.");
@@ -1349,11 +1470,13 @@
         }
         const latEl = document.getElementById("metric-lat");
         if (latEl && latencyMs) latEl.textContent = latencyMs + " ms";
-        if (audioUrl && (!earlyPlaying || !skipFull)) {
-          if (earlyPlaying && !skipFull) stopVoice();
+        if (skipFull && earlyPlaying) {
+          setLive(handsFree ? "escuchando — decí Ilaria" : "En línea", handsFree);
+        } else if (audioUrl) {
+          if (earlyPlaying) stopVoice();
           setLive("hablando…", true);
           await playAudioUrl(audioUrl, finalReply || el.textContent);
-        } else if (!audioUrl && !earlyPlaying) {
+        } else if (!earlyPlaying) {
           setLive("hablando…", true);
           await playAudioUrl("", finalReply || el.textContent);
         } else {
@@ -1375,10 +1498,15 @@
         pushTalk = false;
         return;
       }
-      const blob = await recordUtterance(18000);
+      const rec = await recordUtterance(18000);
+      if (!rec.heard || !rec.blob || rec.blob.size < 1200) {
+        pushTalk = false;
+        setLive(handsFree ? "escuchando — decí Ilaria" : "En línea", handsFree);
+        return;
+      }
       setLive("procesando voz…", true);
       setOrb("thinking");
-      const text = await transcribe(blob);
+      const text = await transcribe(rec.blob);
       pushTalk = false;
       if (text) await send(text);
       else setLive(handsFree ? "escuchando — decí Ilaria" : "En línea", handsFree);
@@ -1410,8 +1538,7 @@
           noteAmbient(level);
           // Barge-in only on a sharp voice spike — not continuous music under her TTS.
           if (speaking && speechOnset(level) && level > ambientRms + 0.08) {
-            try { voiceEl.pause(); voiceEl.currentTime = 0; } catch (e) {}
-            speaking = false;
+            stopVoice();
             setLive("te escucho — corté la voz", true);
             setOrb("listening");
           }
@@ -1429,16 +1556,16 @@
           }
         }
         if (!handsFree || busy || speaking || !startRec) continue;
-        const blob = await recordUtterance(14000);
+        const rec = await recordUtterance(14000);
         if (!handsFree || busy || speaking) continue;
-        if (!blob || blob.size < 1800) {
+        if (!rec.heard || !rec.blob || rec.blob.size < 1800) {
           if (handsFree) setLive("escuchando — decí Ilaria", true);
           await sleep(400);
           continue;
         }
         setLive("procesando voz…", true);
         setOrb("thinking");
-        const text = await transcribe(blob, { quiet: true });
+        const text = await transcribe(rec.blob, { quiet: true });
         const gated = fromHandsFree(text);
         if (handsFree && gated) await send(gated);
         else if (handsFree) {
@@ -1471,8 +1598,11 @@
       freeBtn.textContent = handsFree ? "Oír" : "Mute";
       if (handsFree) {
         ambientRms = 0.02;
+        setHudListening(true);
         handsLoop();
       } else {
+        setHudListening(false);
+        releaseMic();
         setLive("En línea");
         setOrb("");
       }

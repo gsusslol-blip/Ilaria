@@ -284,10 +284,21 @@ class Brain:
             "control_device",
             "note",
             "daily_journal",
+            "read_daily_journal",
             "undo_last",
             "power_control",
             "timer",
+            "set_timer",
+            "set_reminder",
+            "list_reminders",
             "queue_phone_fix",
+            "now",
+            "weather",
+            "calculate",
+            "remember",
+            "recall",
+            "system_status",
+            "list_capabilities",
         }
         for name, result in reversed(results):
             if name not in action_tools:
@@ -907,6 +918,36 @@ class Brain:
                     messages.append(tool_msg)
                     history.append(tool_msg)
 
+                # Stop forcing more tools after the first successful round.
+                choice_mode = "auto"
+
+                research_tools = {
+                    "web_search",
+                    "wikipedia",
+                    "read_page",
+                    "image_search",
+                    "kitchen_recipe",
+                    "wellness_action",
+                    "analyze_workspace",
+                    "get_system_health",
+                    "check_lan_status",
+                }
+                # Pure mechanical / short-answer tools: confirm and exit (no synth LLM).
+                if (
+                    executed_actions
+                    and not manageish
+                    and not any(name in research_tools for name, _ in executed_actions)
+                ):
+                    confirm = self._action_confirm(executed_actions)
+                    if confirm and (actionish or len(confirm) <= 280):
+                        answer = self._finish(confirm)
+                        yield answer
+                        self._store(session_id, answer)
+                        return
+                # Fact/research: one tool round is enough → synthesize.
+                if factish and executed_actions:
+                    break
+
             # After pure execute tools, speak the confirm — no second LLM essay.
             # Manage / research turns keep synthesis for a clear summary.
             research_tools = {
@@ -921,8 +962,7 @@ class Brain:
                 "check_lan_status",
             }
             if (
-                actionish
-                and executed_actions
+                executed_actions
                 and not manageish
                 and not any(name in research_tools for name, _ in executed_actions)
             ):

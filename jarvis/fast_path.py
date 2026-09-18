@@ -83,15 +83,57 @@ def match_fast_path(
 
     if re.fullmatch(
         r"(?:silenci[aá]|silenciar|mute(?:ar)?|sin\s+sonido|callate|c[aá]llate)"
-        r"(?:\s+por\s+favor)?",
+        r"(?:\s+(?:el\s+)?(?:volumen|sonido|pc|todo))?(?:\s+por\s+favor)?",
         lower,
     ):
         if _phone(surf):
             return "phone_hands", {"action": "volume", "target": "mute"}, "mute"
         return "media", {"action": "mute"}, "mute"
 
+    if re.fullmatch(
+        r"(?:desilenci[aá]|unmute(?:ar)?|con\s+sonido|sac[aá]\s+el\s+silencio|"
+        r"quit[aá]\s+el\s+silencio)(?:\s+por\s+favor)?",
+        lower,
+    ):
+        if _phone(surf):
+            return "phone_hands", {"action": "volume", "target": "unmute"}, "unmute"
+        return "media", {"action": "mute"}, "unmute"
+
     if re.fullmatch(r"(?:deshac[eé]r?|undo|arrepent(?:ite)?|volvé?\s+atr[aá]s)", lower):
         return "undo_last", {}, "undo"
+
+    # Timer / reminder — mechanical only (number + unit).
+    m = re.fullmatch(
+        r"(?:timer|temporizador|avis[aá]me|record[aá]me|despert[aá]me)\s+"
+        r"(?:en\s+)?(\d{1,3}(?:[.,]\d+)?)\s*"
+        r"(min|mins|minuto|minutos|hora|horas|seg|segs|segundo|segundos)"
+        r"(?:\s+(?:para|que|:|de)\s*(.+))?",
+        lower,
+    )
+    if not m:
+        m = re.fullmatch(
+            r"en\s+(\d{1,3}(?:[.,]\d+)?)\s*"
+            r"(min|mins|minuto|minutos|hora|horas|seg|segs|segundo|segundos)"
+            r"(?:\s+(?:para|que|:|de)\s*(.+))?",
+            lower,
+        )
+    if m:
+        amount = float(m.group(1).replace(",", "."))
+        unit = m.group(2)
+        label = (m.group(3) if m.lastindex and m.lastindex >= 3 else "") or "Timer"
+        if unit.startswith("hora"):
+            amount *= 60
+        elif unit.startswith("seg"):
+            amount /= 60.0
+        if 0.05 <= amount <= 24 * 60:
+            return (
+                "set_timer",
+                {"minutes": round(amount, 2), "text": label.strip() or "Timer"},
+                "timer",
+            )
+
+    if re.fullmatch(r"pomodoro|foco|timer\s*25", lower):
+        return "set_timer", {"minutes": 25, "text": "Pomodoro"}, "timer_pomodoro"
 
     if re.fullmatch(
         r"(?:qu[eé]\s+hora\s+es(?:\s+por\s+favor)?|hora|fecha|qu[eé]\s+d[ií]a\s+es(?:\s+hoy)?|ahora)",
@@ -313,6 +355,78 @@ def match_fast_path(
     return None
 
 
+def _speakable_fast_result(tool: str, params: dict[str, Any], result: str) -> str:
+    """Map tool results to short TTS-friendly confirms (phrase-cache friendly)."""
+    if tool == "set_volume":
+        level = params.get("level")
+        spoken = {
+            0: "Silenciado.",
+            20: "Volumen al veinte.",
+            30: "Volumen al treinta.",
+            40: "Volumen al cuarenta.",
+            50: "Volumen al cincuenta.",
+            60: "Volumen al sesenta.",
+            70: "Volumen al setenta.",
+            80: "Volumen al ochenta.",
+            100: "Volumen al cien.",
+        }
+        if isinstance(level, int) and level in spoken:
+            return spoken[level]
+        if isinstance(level, int):
+            return f"Volumen al {level}%."
+        return "Volumen ajustado."
+    if tool == "media":
+        mapping = {
+            "mute": "Silenciado.",
+            "vol_up": "Volumen ajustado.",
+            "vol_down": "Volumen ajustado.",
+            "next": "Siguiente.",
+            "prev": "Anterior.",
+            "play_pause": "Listo.",
+            "stop": "Listo.",
+        }
+        return mapping.get(str(params.get("action") or "").lower(), "Listo.")
+    if tool == "undo_last":
+        low = (result or "").lower()
+        if "nada" in low or "no hay" in low:
+            return "No hay nada para deshacer."
+        if "volumen" in low:
+            return "Volumen restaurado."
+        return "Deshecho."
+    if tool == "set_timer":
+        return "Timer listo."
+    if tool == "open_maps":
+        return "Abriendo el mapa."
+    if tool == "open_app":
+        name = str(params.get("name") or "").strip().lower()
+        special = {
+            "spotify": "Abriendo Spotify.",
+            "chrome": "Abriendo Chrome.",
+            "brave": "Listo, abrí brave.",
+            "youtube": "Listo, abrí youtube.",
+            "notepad": "Listo, abrí notepad.",
+            "excel": "Listo, abrí excel.",
+            "calculadora": "Listo, abrí calculadora.",
+        }
+        if name in special:
+            return special[name]
+        if name:
+            return f"Listo, abrí {name}."
+        return "Abierto."
+    if tool == "app_search_action":
+        plat = str(params.get("platform") or "").lower()
+        if "spotify" in plat:
+            return "Abriendo Spotify."
+        if "youtube" in plat or plat in {"yt", "ytmusic"}:
+            return "Listo, abrí youtube."
+        return "Listo."
+    if tool == "screenshot":
+        return "Captura lista."
+    if tool in {"note", "daily_journal"}:
+        return "Anotado."
+    return result
+
+
 def try_fast_path(
     text: str,
     execute: Execute,
@@ -350,7 +464,7 @@ def try_fast_path(
                 )
         except (json.JSONDecodeError, TypeError):
             pass
-    return result
+    return _speakable_fast_result(tool, params, result)
 
 
 try_fast_path_router = try_fast_path

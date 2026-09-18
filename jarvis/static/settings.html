@@ -119,6 +119,43 @@
       <p class="hint" id="voiceHint" style="margin-top:6px">Piper = offline en esta PC. Edge = Neural online (fallback).</p>
       <audio id="voicePreview" style="display:none" preload="none"></audio>
 
+      <h2 id="voiceHwTitle" style="display:none">Micrófono / Whisper (owner)</h2>
+      <div id="voiceHw" style="display:none">
+        <div class="row">
+          <div>
+            <label for="wake_sensitivity">Sensibilidad wake (0.1–1)</label>
+            <input id="wake_sensitivity" name="wake_sensitivity" type="number" min="0.1" max="1" step="0.05" value="0.55" />
+          </div>
+          <div>
+            <label for="wake_mic_index">Índice mic wake (-1 = default)</label>
+            <input id="wake_mic_index" name="wake_mic_index" type="number" step="1" value="-1" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="faster_whisper_model">Modelo Whisper local</label>
+            <select id="faster_whisper_model" name="faster_whisper_model">
+              <option value="">(default / env)</option>
+              <option value="tiny">tiny — más rápido</option>
+              <option value="base">base — equilibrado</option>
+              <option value="small">small — más preciso</option>
+            </select>
+          </div>
+          <div>
+            <label for="stt_language">Idioma STT</label>
+            <select id="stt_language" name="stt_language">
+              <option value="es">es</option>
+              <option value="en">en</option>
+              <option value="auto">auto</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">Wake sensitivity aplica al reiniciar el HUD. Whisper se recarga en el próximo STT.</p>
+        <div class="actions">
+          <button class="ghost" type="button" id="saveVoiceHw">Guardar audio PC</button>
+        </div>
+      </div>
+
       <label>Packs de trabajo habilitados</label>
       <div class="chips" id="packs"></div>
 
@@ -207,10 +244,46 @@
         (u.packs || u.enabled_packs || []).forEach((id) => selected.add(id));
         if (selected.size === 0) selected.add("diario");
         renderPacks(packsPayload.packs || []);
+        if (u.is_owner || me.is_owner) {
+          document.getElementById("voiceHwTitle").style.display = "";
+          document.getElementById("voiceHw").style.display = "";
+          const vp = await fetch("/api/voice-prefs");
+          if (vp.ok) {
+            const data = await vp.json();
+            const p = data.prefs || {};
+            form.wake_sensitivity.value = p.wake_sensitivity ?? 0.55;
+            form.wake_mic_index.value = p.wake_mic_index ?? -1;
+            form.faster_whisper_model.value = p.faster_whisper_model || "";
+            form.stt_language.value = p.stt_language || "es";
+          }
+        }
       })
       .catch(() => {
         document.getElementById("err").textContent = "No pude cargar el perfil.";
       });
+
+    document.getElementById("saveVoiceHw").onclick = async () => {
+      document.getElementById("err").textContent = "";
+      document.getElementById("ok").textContent = "";
+      const res = await fetch("/api/voice-prefs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          wake_sensitivity: Number(form.wake_sensitivity.value),
+          wake_mic_index: Number(form.wake_mic_index.value),
+          faster_whisper_model: form.faster_whisper_model.value,
+          stt_language: form.stt_language.value,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        document.getElementById("err").textContent =
+          (typeof data.detail === "string" ? data.detail : null) || "No pude guardar audio PC.";
+        return;
+      }
+      document.getElementById("ok").textContent = "Audio PC guardado. Reiniciá el HUD si cambiaste wake.";
+    };
 
     document.getElementById("previewVoice").onclick = async () => {
       document.getElementById("err").textContent = "";

@@ -157,13 +157,25 @@ def _provider(settings: Settings) -> str:
 
 def first_speakable_sentence(text: str) -> str | None:
     """Return first speakable chunk when enough text arrived for early TTS."""
-    clean = " ".join((text or "").split())
+    clean = " ".join((text or "").strip().split())
+    if not clean:
+        return None
+    # Instant-execute confirms: speak as soon as the short reply is complete.
+    if re.fullmatch(
+        r"(?:Listo|Hecho|Dale|Ya|Okey|OK|Perfecto|Claro|Silenciado|Deshecho|"
+        r"Siguiente|Anterior|Pausa|Abierto|Abriendo(?:\s+\w+)?|"
+        r"Volumen(?:\s+al\s+[\w%]+|\s+ajustado)?|"
+        r"Timer\s+listo|Captura\s+lista|Anotado)[.!]?",
+        clean,
+        re.I,
+    ):
+        return clean if len(clean) >= 2 else None
     if len(clean) < 8:
         return None
     match = re.search(r"^(.+?[.!?…])(?:\s|$)", clean)
     if match:
         first = match.group(1).strip()
-        if len(first) >= 12:
+        if len(first) >= 8:
             return first
         rest = clean[len(first) :].lstrip()
         if rest:

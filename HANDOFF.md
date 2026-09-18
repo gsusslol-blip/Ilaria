@@ -1,18 +1,25 @@
-# Handoff — Ilaria (IA_Trading) v1.3.7
+# Handoff — Ilaria (local-first)
 # Pegá esto a otra IA. NO reescribir brain/accounts/main/runtime con snippets genéricos.
 
 ## Qué es
-Asistente local tipo JARVIS → **Ilaria**. Dueño de ESTA PC: `gsuss`. Datos en `data/`. No SaaS.
+Asistente local-first **Ilaria**. Dueño de ESTA PC: `gsuss`. Datos en `data/`. No SaaS.
 Español rioplatense en chat; comentarios de código en inglés. Commits solo si el usuario pide.
 
 ## Arranque
 - Dev: `run.bat` → `.venv` → `python main.py` → `jarvis.runtime.main()`
 - Env forzada en run.bat: `OWNER_USERNAME=gsuss`, `HUD_HOST=0.0.0.0`, `HUD_PORT=8787`
 - HUD: http://localhost:8787 (no https / no 127.0.0.1 en Brave)
-- Exe: `build.bat` → `dist\JARVIS\Ilaria.exe` (cerrar Ilaria antes; usar `free-port.bat`)
+- Exe: `build.bat` → `dist\…\Ilaria.exe` (cerrar Ilaria antes; usar `free-port.bat`)
 - Firewall LAN: `firewall-ilaria.bat` como Admin
-- Health: `GET /health` → `{"ok":"1","app":"Ilaria","version":"1.3.7"}`
-- Smoke: `.venv\Scripts\python.exe tests/smoke_test.py` (sqlite temporal, no toca `data/`)
+- Health: `GET /health`
+- Smoke: `.venv\Scripts\python.exe tests/smoke_test.py`
+
+## Audio (2026-09)
+- HUD graba PCM→WAV 16 kHz (no webm) + VAD float; Mute libera el mic.
+- Libre pausa Porcupine vía `POST /api/wake/hud-listening`.
+- Preferencias owner: `/api/voice-prefs` + Settings (sensibilidad wake, mic index, Whisper size).
+- Wake reusa un solo PvRecorder; `WAKE_SENSITIVITY` / `WAKE_MIC_INDEX`.
+- Android: early_audio + barge-in; iOS: WakeListen SFSpeech (botón Mic).
 
 # Personalidad filial dulce (owner=papá); packs NO pisan identidad; Ollama gemma2:2b + Whisper CPU
 # TTS_VOICE=es-AR-ElenaNeural; APIs reales /api/chat (no /api/v1)

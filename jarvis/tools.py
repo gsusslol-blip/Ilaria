@@ -612,9 +612,18 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
             seen.add(key)
             collected.append({"title": title, "href": href, "body": body, "engine": engine})
 
+    best_rows: list[dict[str, Any]] = []
+    best_engine = ""
+    best_score = -1.0
+    # One DDGS client for the whole chain (connection reuse).
+    try:
+        ddgs = DDGS(timeout=int(_SEARCH_TIMEOUT_S))
+    except Exception as exc:  # noqa: BLE001
+        return f"No results. (ddgs: {exc})"
+
     def _engine(backend: str) -> tuple[str, list[dict[str, Any]], str]:
         try:
-            rows = DDGS(timeout=int(_SEARCH_TIMEOUT_S)).text(
+            rows = ddgs.text(
                 q,
                 max_results=limit,
                 backend=backend,
@@ -624,9 +633,6 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
         except Exception as exc:  # noqa: BLE001
             return backend, [], f"{backend}: {exc}"
 
-    best_rows: list[dict[str, Any]] = []
-    best_engine = ""
-    best_score = -1.0
     for backend in _SEARCH_CHAIN:
         eng, rows, err = _engine(backend)
         if err:
@@ -640,7 +646,7 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
             best_rows = rows
             best_engine = eng
         # Good enough — stop early (Bing usually wins here).
-        if score >= 1.2:
+        if score >= 0.7 or (eng == "bing" and len(rows) >= 3 and score >= 0.45):
             break
 
     if best_rows:
@@ -656,11 +662,11 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     for item in collected:
         lines.append(f"- {item['title']}\n  {item['href']}\n  {item['body']}")
 
-    # One top page only when snippets are very thin — short timeout to protect chat latency.
+    # One top page only when snippets are very thin AND relevance was weak.
     thin = sum(1 for item in collected if len(item.get("body") or "") < 40)
     body_chars = sum(len(item.get("body") or "") for item in collected)
     top = next((item["href"] for item in collected if item.get("href")), "")
-    if thin >= max(2, len(collected) // 2) and body_chars < 180 and top:
+    if best_score < 0.7 and thin >= max(2, len(collected) // 2) and body_chars < 180 and top:
         try:
             text = _read_page(top, timeout_s=3.5)
             if text and not text.startswith(("Fetch failed", "Invalid", "Empty", "Blocked")):

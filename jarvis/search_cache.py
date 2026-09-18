@@ -17,8 +17,11 @@ from typing import Any
 _TOKEN = re.compile(r"[a-záéíóúüñ0-9]{2,}", re.I)
 _CACHE_NAME = "search_cache.json"
 _DEFAULT_TTL_S = 24 * 3600
+_FRESH_TTL_S = 30 * 60
 _MAX_ENTRIES = 120
 _ACCENT = str.maketrans("áéíóúüñ", "aeiouun")
+# path -> (mtime, rows) — avoid re-parsing JSON on every lookup
+_ram_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def cache_path(workspace: Path) -> Path:
@@ -29,13 +32,23 @@ def cache_path(workspace: Path) -> Path:
 
 def _normalize_query(text: str) -> str:
     raw = " ".join((text or "").lower().split()).translate(_ACCENT)
+    # Keep temporal/price cues (hoy/ahora) so cache does not serve stale facts.
     raw = re.sub(
         r"\b(por favor|please|decime|contame|buscar?|busca|google(?:a[rd]?)?|"
-        r"hoy|ahora|como se hace|como hacer|receta de|receta)\b",
+        r"como se hace|como hacer|receta de|receta)\b",
         " ",
         raw,
     )
     return " ".join(raw.split())
+
+
+def _freshness_query(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(hoy|ahora|precio|cotiz|dolar|dólar|blue|noticia|clima|weather|temp)\b",
+            (text or "").lower(),
+        )
+    )
 
 
 def _tokens(text: str) -> list[str]:
@@ -106,19 +119,34 @@ def _ttl_seconds(kind: str = "web") -> float:
 
 
 def _load(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    key = str(path)
+    try:
+        mtime = path.stat().st_mtime if path.is_file() else -1.0
+    except OSError:
         return []
+    if mtime < 0:
+        return []
+    hit = _ram_cache.get(key)
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
     try:
         raw = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return []
     if not isinstance(raw, list):
         return []
-    return [row for row in raw if isinstance(row, dict)]
+    rows = [row for row in raw if isinstance(row, dict)]
+    _ram_cache[key] = (mtime, rows)
+    return rows
 
 
 def _save(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.write_text(json.dumps(rows[-_MAX_ENTRIES:], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    payload = rows[-_MAX_ENTRIES:]
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    try:
+        _ram_cache[str(path)] = (path.stat().st_mtime, payload)
+    except OSError:
+        _ram_cache.pop(str(path), None)
 
 
 def lookup(
@@ -137,7 +165,7 @@ def lookup(
         return None
     path = cache_path(workspace)
     now = time.time()
-    ttl = _ttl_seconds(kind)
+    ttl = _FRESH_TTL_S if _freshness_query(q) else _ttl_seconds(kind)
     thr = _threshold()
     best: dict[str, Any] | None = None
     best_score = 0.0
@@ -211,7 +239,5 @@ def store(
 
 
 def format_hit(hit: dict[str, Any]) -> str:
-    score = hit.get("score", 0)
-    age = hit.get("age_sec", 0)
-    header = f"[SEARCH_CACHE hit score={score} age={age}s]\n"
-    return header + str(hit.get("answer") or "")
+    # Return cached answer only — no meta header for the LLM/user.
+    return str(hit.get("answer") or "")

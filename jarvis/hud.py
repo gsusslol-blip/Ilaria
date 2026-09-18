@@ -122,6 +122,17 @@ class VoicePreviewIn(BaseModel):
     voice_id: str = "ilaria"
 
 
+class WakeHudIn(BaseModel):
+    active: bool = False
+
+
+class VoicePrefsIn(BaseModel):
+    wake_sensitivity: float | None = None
+    wake_mic_index: int | None = None
+    faster_whisper_model: str | None = None
+    stt_language: str | None = None
+
+
 class AdminUserIn(BaseModel):
     user_id: int
     disabled: bool | None = None
@@ -808,11 +819,40 @@ def create_hud(state: AppState) -> FastAPI:
             early_sentence = ""
             early_audio_url = None
             early_sent = False
+            early_task: asyncio.Task | None = None
+
+            async def _render_early(sentence: str) -> str | None:
+                if not gate.allow(f"tts:{user.id}", 20, 60):
+                    return None
+                try:
+                    path = await speak_to_file(
+                        state.settings_for(user),
+                        sentence,
+                        f"tts-{user.id}-early-{time.time_ns()}.mp3",
+                    )
+                    return audio_api_path(path.name)
+                except Exception:  # noqa: BLE001
+                    return None
+
             while True:
                 kind, value = await queue.get()
                 if kind == "token" and value:
                     parts.append(value)
                     yield f"event: token\ndata: {json.dumps({'text': value}, ensure_ascii=False)}\n\n"
+                    if (
+                        early_task is not None
+                        and early_audio_url is None
+                        and early_task.done()
+                    ):
+                        try:
+                            early_audio_url = early_task.result()
+                        except Exception:  # noqa: BLE001
+                            early_audio_url = None
+                        if early_audio_url:
+                            yield (
+                                "event: early_audio\n"
+                                f"data: {json.dumps({'audio_url': early_audio_url, 'text': early_sentence}, ensure_ascii=False)}\n\n"
+                            )
                     if payload.speak and not early_sent:
                         from jarvis.personality import scrub_public_reply
                         from jarvis.tts import first_speakable_sentence
@@ -821,20 +861,8 @@ def create_hud(state: AppState) -> FastAPI:
                         if sentence:
                             early_sent = True
                             early_sentence = sentence
-                            if gate.allow(f"tts:{user.id}", 20, 60):
-                                try:
-                                    path = await speak_to_file(
-                                        state.settings_for(user),
-                                        sentence,
-                                        f"tts-{user.id}-early-{time.time_ns()}.mp3",
-                                    )
-                                    early_audio_url = audio_api_path(path.name)
-                                    yield (
-                                        "event: early_audio\n"
-                                        f"data: {json.dumps({'audio_url': early_audio_url, 'text': sentence}, ensure_ascii=False)}\n\n"
-                                    )
-                                except Exception:  # noqa: BLE001
-                                    early_audio_url = None
+                            # Do not block token stream on Piper — render in parallel.
+                            early_task = asyncio.create_task(_render_early(sentence))
                 elif kind == "error":
                     from jarvis.personality import scrub_public_reply
 
@@ -843,22 +871,38 @@ def create_hud(state: AppState) -> FastAPI:
                     return
                 elif kind == "end":
                     break
+
+            if early_task is not None:
+                try:
+                    early_audio_url = await early_task
+                except Exception:  # noqa: BLE001
+                    early_audio_url = None
+                if early_audio_url:
+                    yield (
+                        "event: early_audio\n"
+                        f"data: {json.dumps({'audio_url': early_audio_url, 'text': early_sentence}, ensure_ascii=False)}\n\n"
+                    )
+
             from jarvis.personality import scrub_public_reply
 
             reply = scrub_public_reply(_with_android_hint(brain, brain._last_assistant(session_id)))
             audio_url = None
             skip_full_tts = False
-            # If early TTS already covered a short final reply, skip a second render.
-            if (
-                early_audio_url
-                and early_sentence
-                and reply.strip()
-                and len(reply.strip()) <= max(len(early_sentence) + 36, 96)
-                and reply.strip().startswith(early_sentence[: min(24, len(early_sentence))])
-            ):
-                audio_url = early_audio_url
-                skip_full_tts = True
-            elif payload.speak and reply.strip():
+            # If early TTS already covered the final reply, skip a second Piper pass.
+            reply_s = reply.strip()
+            early_s = early_sentence.strip()
+            if early_audio_url and early_s and reply_s:
+                if (
+                    reply_s == early_s
+                    or reply_s.startswith(early_s)
+                    or (
+                        len(reply_s) <= max(len(early_s) + 48, 120)
+                        and reply_s.startswith(early_s[: min(24, len(early_s))])
+                    )
+                ):
+                    audio_url = early_audio_url
+                    skip_full_tts = True
+            if not skip_full_tts and payload.speak and reply_s:
                 if not gate.allow(f"tts:{user.id}", 20, 60):
                     yield (
                         "event: done\n"
@@ -937,6 +981,35 @@ def create_hud(state: AppState) -> FastAPI:
                 )
             raise HTTPException(status_code=502, detail=f"No pude transcribir: {detail}") from exc
         return {"text": text}
+
+    @app.post("/api/wake/hud-listening")
+    async def wake_hud_listening(payload: WakeHudIn, request: Request) -> dict[str, Any]:
+        """HUD Libre / push-to-talk holds the mic → pause Porcupine."""
+        require_user(request)
+        from jarvis.wake_control import set_hud_listening
+
+        set_hud_listening(bool(payload.active))
+        return {"ok": True, "hud_listening": bool(payload.active)}
+
+    @app.get("/api/voice-prefs")
+    async def voice_prefs_get(request: Request) -> dict[str, Any]:
+        require_owner(request)
+        from jarvis.voice_prefs import load_voice_prefs
+
+        return {"prefs": load_voice_prefs()}
+
+    @app.post("/api/voice-prefs")
+    async def voice_prefs_post(payload: VoicePrefsIn, request: Request) -> dict[str, Any]:
+        require_owner(request)
+        from jarvis.voice_prefs import save_voice_prefs
+        from jarvis import whisper_local
+
+        patch = payload.model_dump(exclude_none=True)
+        prefs = save_voice_prefs(patch)
+        # Force Whisper reload on next STT if model changed.
+        if "faster_whisper_model" in patch:
+            whisper_local.reset_model()
+        return {"ok": True, "prefs": prefs}
 
     @app.post("/api/tts")
     async def tts(payload: SpeakIn, request: Request) -> FileResponse:

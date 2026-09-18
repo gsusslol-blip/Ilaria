@@ -15,6 +15,9 @@ struct ContentView: View {
     @State private var busy = false
     @State private var showProfile = false
     @State private var status = "Listo"
+    @StateObject private var wake = WakeListenModel()
+    @State private var lastTalk: TimeInterval = 0
+    @State private var listenOn = false
 
     var body: some View {
         ZStack {
@@ -64,6 +67,24 @@ struct ContentView: View {
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08)))
                         .foregroundStyle(.white)
                         .disabled(busy)
+                    Button(listenOn ? "Oír" : "Mic") {
+                        listenOn.toggle()
+                        if listenOn {
+                            wake.busy = busy
+                            wake.lastTalk = lastTalk
+                            wake.onBargeIn = { SoloTts.stop() }
+                            wake.onHeard = { text in
+                                Task { await speakHeard(text) }
+                            }
+                            wake.start()
+                            status = "escuchando — decí Ilaria"
+                        } else {
+                            wake.stop()
+                            status = prefs.loggedIn && !prefs.solo ? "sync PC" : "independiente"
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(listenOn ? Color(red: 1, green: 0.16, blue: 0.33) : .gray)
                     Button("OK") { Task { await send() } }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(red: 1, green: 0.16, blue: 0.33))
@@ -82,6 +103,15 @@ struct ContentView: View {
             UIDevice.current.isBatteryMonitoringEnabled = true
             status = prefs.loggedIn && !prefs.solo ? "sync PC" : "independiente"
         }
+        .onChange(of: busy) { _, v in wake.busy = v }
+    }
+
+    private func speakHeard(_ text: String) async {
+        guard !busy else { return }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        draft = cleaned
+        await send()
     }
 
     private func send() async {
@@ -91,7 +121,12 @@ struct ContentView: View {
         log.append(Bubble(mine: true, text: text))
         busy = true
         status = "…"
-        defer { busy = false }
+        defer {
+            busy = false
+            lastTalk = Date().timeIntervalSince1970
+            wake.lastTalk = lastTalk
+            if listenOn { status = "escuchando — decí Ilaria" }
+        }
         do {
             let engine = brain ?? Brain(prefs: prefs)
             brain = engine

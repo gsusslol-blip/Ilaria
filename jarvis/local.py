@@ -612,7 +612,8 @@ def try_local_command(
         if lower.startswith("google"):
             if android:
                 return run("phone_hands", action="search", target=query)
-            return run("google", query=query)
+            # Prefer web_search (Bing + semantic cache) over opening a browser tab.
+            return run("web_search", query=query, max_results=5)
         return run("web_search", query=query, max_results=5)
 
     if len(raw) >= 12 and re.search(

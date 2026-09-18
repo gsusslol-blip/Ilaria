@@ -89,14 +89,30 @@ class FastPathTests(unittest.TestCase):
 
         def execute(tool: str, args: str) -> str:
             calls.append((tool, args))
-            return "ok volumen"
+            return "raw volume ok"
 
         t0 = time.perf_counter()
         out = try_fast_path("volumen al 25", execute)
         ms = (time.perf_counter() - t0) * 1000.0
-        self.assertEqual(out, "ok volumen")
+        self.assertEqual(out, "Volumen al 25%.")
         self.assertEqual(calls[0][0], "set_volume")
         self.assertLess(ms, 50.0)
+
+    def test_timer_and_unmute(self) -> None:
+        hit = match_fp("avisame en 5 minutos")
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit[0], "set_timer")
+        self.assertEqual(hit[1].get("minutes"), 5)
+        self.assertEqual(match_fp("unmute")[0], "media")  # type: ignore[index]
+        self.assertEqual(match_fp("silenciá el volumen")[0], "media")  # type: ignore[index]
+
+    def test_speakable_open_app(self) -> None:
+        def execute(tool: str, args: str) -> str:
+            return "Opened whatever"
+
+        out = try_fast_path("abrí spotify", execute)
+        self.assertEqual(out, "Abriendo Spotify.")
 
     def test_split_prompt_static_stable(self) -> None:
         settings = MagicMock()

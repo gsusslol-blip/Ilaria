@@ -9,6 +9,7 @@ import struct
 import time
 import wave
 from io import BytesIO
+from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
@@ -151,27 +152,34 @@ def record_command_wav(
     sample_rate: int = 16000,
     frame_length: int = 512,
     max_seconds: float = 8.0,
-    silence_seconds: float = 1.2,
+    silence_seconds: float = 0.55,
     energy_threshold: int = 450,
+    recorder: Any | None = None,
 ) -> bytes:
     """
     Record after a wake word using PvRecorder (not PyAudio).
     RMS + zero-crossing VAD: keep listening until silence or max_seconds.
+    Pass an existing `recorder` (wake loop) to avoid reopening the mic device.
     Returns WAV bytes ready for Whisper.
     """
-    from pvrecorder import PvRecorder
-
     max_seconds = max(3.0, min(12.0, float(max_seconds)))
-    silence_seconds = max(0.4, min(3.0, float(silence_seconds)))
+    silence_seconds = max(0.35, min(3.0, float(silence_seconds)))
     frames_needed = int((sample_rate / frame_length) * max_seconds)
     silence_needed = max(1, int((sample_rate / frame_length) * silence_seconds))
 
-    recorder = PvRecorder(device_index=-1, frame_length=frame_length)
+    own = recorder is None
+    if own:
+        from pvrecorder import PvRecorder
+
+        device = int(os.getenv("WAKE_MIC_INDEX", "-1").strip() or "-1")
+        recorder = PvRecorder(device_index=device, frame_length=frame_length)
+    assert recorder is not None
     pcm_all: list[int] = []
     silent_streak = 0
     heard_voice = False
     try:
-        recorder.start()
+        if own or not getattr(recorder, "is_recording", False):
+            recorder.start()
         print("[!] Grabando comando del usuario…")
         for _ in range(max(1, frames_needed)):
             chunk = recorder.read()
@@ -187,26 +195,16 @@ def record_command_wav(
                 if silent_streak >= silence_needed:
                     break
     finally:
-        try:
-            if recorder.is_recording:
-                recorder.stop()
-            recorder.delete()
-        except Exception:
-            pass
+        if own:
+            try:
+                if recorder.is_recording:
+                    recorder.stop()
+                recorder.delete()
+            except Exception:
+                pass
 
-    if not pcm_all:
+    if not pcm_all or not heard_voice:
         return b""
-
-    try:
-        dump = DATA_DIR / "temp_command.wav"
-        dump.parent.mkdir(parents=True, exist_ok=True)
-        with wave.open(str(dump), "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(struct.pack(f"{len(pcm_all)}h", *pcm_all))
-    except Exception:
-        pass
 
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wf:

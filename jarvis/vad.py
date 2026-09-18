@@ -37,9 +37,12 @@ def wav_contains_speech(data: bytes, filename: str = "") -> bool:
     rms = _rms(pcm)
     if rms < _ENERGY_MIN:
         return False
-    silero = _silero_speech_ratio(pcm, rate)
-    if silero is not None:
-        return silero >= 0.12
+    # Hot path: energy+ZCR first. Silero only if the ONNX is already on disk
+    # (never block STT on a first-time model download).
+    if _MODEL_PATH.is_file():
+        silero = _silero_speech_ratio(pcm, rate)
+        if silero is not None:
+            return silero >= 0.12
     return _energy_speech(pcm, rate)
 
 
