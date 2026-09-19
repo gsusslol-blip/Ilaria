@@ -192,6 +192,17 @@ def lookup(
     answer = str(best.get("answer") or "").strip()
     if not answer:
         return None
+    # Guard: skip poisoned dump cache hits (e.g. F1 for "descubrió América").
+    # Short prose answers may paraphrase without repeating every query token.
+    looks_dump = answer.lstrip().startswith("Source:") or (
+        answer.count("http://") + answer.count("https://") >= 2
+    )
+    if looks_dump:
+        ans_keys = set(_TOKEN.findall(_normalize_query(answer)))
+        content_keys = {k for k in set(_tokens(q)) if len(k) >= 4}
+        need = max(1, min(2, len(content_keys) // 2)) if content_keys else 0
+        if content_keys and len(content_keys & ans_keys) < need:
+            return None
     return {
         "query": best.get("query"),
         "answer": answer,

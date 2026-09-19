@@ -48,7 +48,7 @@ class VoiceAudioTests(unittest.TestCase):
 
     def test_search_cache_no_meta_header(self) -> None:
         td = Path(tempfile.mkdtemp())
-        store("capital de francia", "Source: bing\n- París", td, kind="web")
+        store("capital de francia", "Source: bing\n- París es la capital de Francia.", td, kind="web")
         hit = lookup("capital de francia", td, kind="web")
         self.assertIsNotNone(hit)
         assert hit is not None
