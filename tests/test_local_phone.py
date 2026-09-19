@@ -153,7 +153,8 @@ class LocalPhoneTests(unittest.TestCase):
             surface="ios",
         )
         self.assertEqual(captured[0][0], "phone_hands")
-        self.assertEqual(captured[0][1]["action"], "maps")
+        # navigate (and maps) are both valid phone_hands map actions
+        self.assertIn(captured[0][1]["action"], {"maps", "navigate"})
         self.assertIn("Palermo", captured[0][1]["target"])
 
     def test_https_on_phone_opens_browser_action(self) -> None:

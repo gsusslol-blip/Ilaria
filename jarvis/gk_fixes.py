@@ -28,6 +28,9 @@ _BUILTIN: dict[str, str] = {
     "simbolo fe": "Fe es hierro.",
     "símbolo fe": "Fe es hierro.",
     "moneda de argentina": "El peso argentino.",
+    "quien descubrio america": "Cristóbal Colón llegó a América en 1492.",
+    "quién descubrió américa": "Cristóbal Colón llegó a América en 1492.",
+    "descubrio america": "Cristóbal Colón llegó a América en 1492.",
 }
 
 _ACCENT = str.maketrans("áéíóúüñ", "aeiouun")
