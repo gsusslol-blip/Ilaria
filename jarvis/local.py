@@ -454,19 +454,14 @@ def try_local_command(
             return run("phone_hands", action="youtube", target=q)
         return run("play_music", query=q, platform="youtube")
 
-    translate = re.match(
-        r"^(?:traduc[ií]|traducir|translate)\s+(?:al?\s+\w+\s+)?(.+)$",
-        raw,
-        re.I,
-    )
-    if translate:
-        q = translate.group(1).strip()
-        if android:
-            return run("phone_hands", action="translate", text=q)
-        return run(
-            "open_browser",
-            url=f"https://translate.google.com/?sl=auto&tl=es&text={_url_quote(q)}&op=translate",
-        )
+    translate = None
+    from jarvis.translate import parse_translate_request
+
+    parsed_tr = parse_translate_request(raw)
+    if parsed_tr:
+        phrase, src, tgt = parsed_tr
+        # On phone still return spoken translation from PC; optional UI open is secondary.
+        return run("translate_text", text=phrase, target=tgt, source=src)
 
     define = re.match(r"^(?:defin[ií]|definici[oó]n\s+de|significado\s+de)\s+(.+)$", raw, re.I)
     if define:
@@ -760,7 +755,7 @@ def _help(settings: Settings) -> str:
         "- Memoria: «acordate que mi team es River», «qué sabés»\n"
         "- Timers: «timer 10 minutos», «avisame en 5 minutos», «pomodoro»\n"
         "- Buscar: «busca dólar blue», «google receta de milanesa», «qué es X»\n"
-        "- Traducir / definir: «traducí hello world», «definí inflación»\n"
+        "- Traducir: «traducí hello world», «cómo se dice hola en inglés» (te contesta la traducción)\n"
         "- Ruta: «cómo llego a Palermo»\n"
         "- Apps: «abrí Spotify», «chrome», «calculadora», «youtube», «gmail»\n"
         "- Carpetas: «abrí descargas / escritorio / documentos»\n"

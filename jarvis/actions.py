@@ -188,6 +188,7 @@ class Actions:
             "reading the SMS inbox, root, or hardware you do not own.\n"
             "Stack diagnose: get_system_health / check_lan_status; "
             "PC lenta / bottlenecks / qué mejorar: diagnose_pc (local CPU/RAM/disk); "
+            "translate phrases: translate_text (spoken result, not just a browser tab); "
             "owner remediación allowlisted: relaunch_service (ollama|piper|ha_ping).\n"
             "On the Ilaria Android/iOS app: phone_hands (dialer, SMS draft, WhatsApp draft, maps, "
             "apps, torch, camera, gallery, volume, alarm/timer, settings, share)."
@@ -682,6 +683,12 @@ class Actions:
         from jarvis.pc_diagnose import speakable_pc_diagnosis
 
         return speakable_pc_diagnosis()
+
+    def translate_text(self, text: str, target: str = "es", source: str = "auto") -> str:
+        from jarvis.translate import speakable_translation, translate_text
+
+        result = translate_text(text, target=target or "es", source=source or "auto")
+        return speakable_translation(result, original=text)
 
     def daily_journal(self, content: str) -> str:
         text = content.strip()

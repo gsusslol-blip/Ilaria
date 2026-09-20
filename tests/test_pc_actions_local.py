@@ -124,8 +124,9 @@ class PcActionsLocalTests(unittest.TestCase):
 
     def test_translate(self) -> None:
         captured = self._run("traduci hello world")
-        self.assertEqual(captured[0][0], "open_browser")
-        self.assertIn("translate.google.com", captured[0][1]["url"])
+        self.assertEqual(captured[0][0], "translate_text")
+        self.assertEqual(captured[0][1]["text"].lower(), "hello world")
+        self.assertEqual(captured[0][1]["target"], "es")
 
     def test_youtube_search(self) -> None:
         captured = self._run("busca en youtube cerati")

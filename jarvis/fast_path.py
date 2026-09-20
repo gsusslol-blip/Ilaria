@@ -226,6 +226,17 @@ def match_fast_path(
     if looks_like_pc_slow(text):
         return "diagnose_pc", {}, "pc_slow"
 
+    from jarvis.translate import parse_translate_request
+
+    parsed_tr = parse_translate_request(text)
+    if parsed_tr:
+        phrase, src, tgt = parsed_tr
+        return (
+            "translate_text",
+            {"text": phrase, "target": tgt, "source": src},
+            "translate",
+        )
+
     if re.fullmatch(
         r"(?:captura(?:\s+de\s+pantalla)?|screenshot|sac[aá]\s+(?:una\s+)?captura)",
         lower,
@@ -406,6 +417,8 @@ def _speakable_fast_result(tool: str, params: dict[str, Any], result: str) -> st
         return (result or "").strip()[:220] or "Estado listo."
     if tool == "diagnose_pc":
         return (result or "").strip()[:400] or "Listo el diagnóstico de la PC."
+    if tool == "translate_text":
+        return (result or "").strip()[:400] or "Listo."
     if tool == "open_app":
         name = str(params.get("name") or "").strip().lower()
         special = {

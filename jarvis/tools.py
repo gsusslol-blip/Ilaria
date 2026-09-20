@@ -431,6 +431,24 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {},
     ),
     _fn(
+        "translate_text",
+        "Translate a phrase to another language and return the translated text (spoken answer). "
+        "Use for 'traducí…', 'cómo se dice X en inglés', 'qué significa hello'. "
+        "Prefer this over opening Google Translate in the browser.",
+        {
+            "text": {"type": "string", "description": "Phrase to translate"},
+            "target": {
+                "type": "string",
+                "description": "Target language code or name (es, en, it, pt, fr, de…). Default es.",
+            },
+            "source": {
+                "type": "string",
+                "description": "Source language or 'auto'. Default auto.",
+            },
+        },
+        ["text"],
+    ),
+    _fn(
         "relaunch_service",
         "One-step allowlisted remediación of ILARIA stack only. "
         "service: ollama | piper | ha_ping. No arbitrary shell. Owner-oriented.",
@@ -1022,6 +1040,12 @@ def make_executor(
             return health_report_text(settings)
         if name == "diagnose_pc":
             return actions.diagnose_pc()
+        if name == "translate_text":
+            return actions.translate_text(
+                str(args.get("text") or args.get("query") or ""),
+                target=str(args.get("target") or args.get("to") or "es"),
+                source=str(args.get("source") or args.get("from") or "auto"),
+            )
         if name == "relaunch_service":
             from jarvis.self_healing import relaunch_service
 
