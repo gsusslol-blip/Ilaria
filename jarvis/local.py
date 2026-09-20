@@ -11,6 +11,25 @@ from jarvis.memory import Memory
 
 Execute = Callable[[str, str], str]
 
+# Subjective taste / appreciation — fixed soft reply, never web_search.
+_APPRECIATION_RE = re.compile(
+    r"\b("
+    r"m[aá]s\s+lind[oa]|m[aá]s\s+hermos[oa]|m[aá]s\s+guap[oa]|m[aá]s\s+bonit[oa]|"
+    r"m[aá]s\s+fea|m[aá]s\s+feo|m[aá]s\s+atractiv|"
+    r"qui[eé]n\s+es\s+m[aá]s|prefer[ií]s|te\s+gusta\s+m[aá]s|prefer[ií]s\s+a|"
+    r"cu[aá]l\s+(?:te\s+)?gusta\s+m[aá]s|qui[eé]n\s+(?:te\s+)?cae\s+mejor|"
+    r"m[aá]s\s+rico|m[aá]s\s+rica|favorit[oa]|tu\s+favorit|"
+    r"qui[eé]n\s+es\s+mejor|qui[eé]n\s+mejor|mejor\s+entre|"
+    r"messi\s+o\s+cr7|cr7\s+o\s+messi"
+    r")\b",
+    re.I,
+)
+
+_APPRECIATION_REPLY = (
+    "Eso es gustos, no hay una respuesta objetiva. "
+    "Contame qué preferís vos y lo bancamos — yo no armo ranking de personas ni de gustos."
+)
+
 
 def try_local_command(
     text: str,
@@ -38,6 +57,9 @@ def try_local_command(
 
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
+
+    if _APPRECIATION_RE.search(raw):
+        return _APPRECIATION_REPLY
 
     fixed = _gk_fix(raw)
     if fixed:
@@ -630,8 +652,16 @@ def try_local_command(
         if hit is not None:
             return hit
 
-    if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur)\b", lower):
-        return run("web_search", query=raw, max_results=5)
+    if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur|mep|ccl)\b", lower):
+        hit = run("web_search", query=raw, max_results=5)
+        from jarvis.search_speak import speakable_from_search
+
+        spoken = speakable_from_search(hit or "", raw, max_words=45)
+        if spoken:
+            return spoken
+        if hit and not str(hit).startswith("No results") and "error" not in str(hit).lower()[:40]:
+            return str(hit)[:900]
+        return "No pude cotizar en este momento. Probá de nuevo en un toque."
 
     img = re.match(
         r"^(?:busc[aá]|busca[r]?|mostr[aá]|dame|quiero|necesito)\s+"

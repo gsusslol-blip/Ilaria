@@ -39,6 +39,13 @@ class SearchCacheTests(unittest.TestCase):
             store("clima en córdoba", "25 C soleado", ws, kind="web")
             self.assertIsNone(lookup("precio bitcoin", ws, kind="web"))
 
+    def test_freshness_helper(self) -> None:
+        from jarvis.search_cache import is_freshness_query
+
+        self.assertTrue(is_freshness_query("dólar blue hoy"))
+        self.assertTrue(is_freshness_query("precio mep ahora"))
+        self.assertFalse(is_freshness_query("capital de Francia"))
+
 
 if __name__ == "__main__":
     unittest.main()

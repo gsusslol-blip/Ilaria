@@ -611,10 +611,15 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     q = _clean_search_query(" ".join((query or "").split()))
     if not q:
         return "Empty query."
-    cached = lookup(q, workspace, kind="web")
-    if cached:
-        print(f"[SEARCH_CACHE] hit score={cached.get('score')} for «{q[:60]}»")
-        return format_hit(cached)
+    from jarvis.search_cache import is_freshness_query
+
+    # FX / news / weather: always hit the live web (no semantic cache).
+    fresh = is_freshness_query(q)
+    if not fresh:
+        cached = lookup(q, workspace, kind="web")
+        if cached:
+            print(f"[SEARCH_CACHE] hit score={cached.get('score')} for «{q[:60]}»")
+            return format_hit(cached)
 
     limit = max(1, min(int(max_results or 5), 8))
     collected: list[dict[str, Any]] = []
@@ -703,7 +708,8 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
             lines.append(f"Page extract skipped: {exc}")
 
     result = "\n".join(lines)
-    if best_score >= 0.35:
+    # Do not cache FX/news/weather — next ask must be live again.
+    if best_score >= 0.35 and not fresh:
         store(q, result, workspace, kind="web")
     return result
 
