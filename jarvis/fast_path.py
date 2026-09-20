@@ -204,7 +204,23 @@ def match_fast_path(
         r"bit[aá]cora(?:\s+de\s+hoy)?)",
         lower,
     ):
-        return "read_daily_journal", {}, "journal_read"
+        return "read_daily_journal", {"which": "today"}, "journal_read"
+
+    if re.fullmatch(
+        r"(?:en\s+qu[eé]\s+me\s+qued[eé]|qu[eé]\s+anot[eé]|resumen\s+(?:de\s+)?(?:la\s+)?"
+        r"bit[aá]cora|contexto\s+(?:de\s+)?ayer|qu[eé]\s+hice\s+ayer|"
+        r"bit[aá]cora\s+de\s+ayer|diario\s+de\s+ayer)",
+        lower,
+    ):
+        which = "yesterday" if "ayer" in lower and "qued" not in lower else "recent"
+        return "read_daily_journal", {"which": which}, "journal_resume"
+
+    if re.fullmatch(
+        r"(?:pon(?:eme|[eé])?\s+(?:eso|lo\s+mismo|lo\s+de\s+ayer|lo\s+[uú]ltimo)|"
+        r"la\s+[uú]ltima\s+canci[oó]n|reproduc[ií]\s+(?:eso|lo\s+de\s+ayer))",
+        lower,
+    ):
+        return "replay_last_music", {"hint": compact}, "music_replay"
 
     if re.fullmatch(r"(?:siguiente|next|pr[oó]xima(?:\s+canci[oó]n)?)", lower):
         return "media", {"action": "next"}, "media_next"
@@ -226,6 +242,16 @@ def match_fast_path(
     if looks_like_pc_slow(text):
         return "diagnose_pc", {}, "pc_slow"
 
+    from jarvis.windows_howto import match_windows_howto
+
+    if match_windows_howto(text):
+        return "windows_howto", {"query": compact}, "windows_howto"
+
+    from jarvis.shop_compare import looks_like_shop_compare
+
+    if looks_like_shop_compare(text):
+        return "shop_compare", {"query": compact}, "shop_compare"
+
     from jarvis.translate import parse_translate_request
 
     parsed_tr = parse_translate_request(text)
@@ -236,6 +262,14 @@ def match_fast_path(
             {"text": phrase, "target": tgt, "source": src},
             "translate",
         )
+
+    if re.fullmatch(
+        r"(?:estado(?:\s+de)?(?:\s+la)?\s+(?:red|lan|wifi|wi[\-\s]?fi)|"
+        r"revis[aá]\s+(?:la\s+)?(?:red|lan|wifi|internet|dns)|"
+        r"no\s+me\s+anda\s+(?:el\s+)?(?:wifi|internet|red))",
+        lower,
+    ):
+        return "check_lan_status", {}, "lan_status"
 
     if re.fullmatch(
         r"(?:captura(?:\s+de\s+pantalla)?|screenshot|sac[aá]\s+(?:una\s+)?captura)",
@@ -419,6 +453,16 @@ def _speakable_fast_result(tool: str, params: dict[str, Any], result: str) -> st
         return (result or "").strip()[:400] or "Listo el diagnóstico de la PC."
     if tool == "translate_text":
         return (result or "").strip()[:400] or "Listo."
+    if tool == "windows_howto":
+        return (result or "").strip()[:420] or "Listo la guía de Windows."
+    if tool == "check_lan_status":
+        return (result or "").strip()[:420] or "Listo el estado de la red."
+    if tool == "shop_compare":
+        return (result or "").strip()[:420] or "Listo el resumen de compra."
+    if tool == "replay_last_music":
+        return (result or "").strip()[:220] or "Listo."
+    if tool == "read_daily_journal":
+        return (result or "").strip()[:420] or "Sin bitácora."
     if tool == "open_app":
         name = str(params.get("name") or "").strip().lower()
         special = {

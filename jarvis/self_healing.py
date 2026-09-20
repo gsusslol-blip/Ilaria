@@ -166,6 +166,10 @@ def check_lan_status(settings: Settings) -> dict[str, Any]:
         probe.close()
     except OSError:
         internet = False
+    deep = _lan_deep_probe()
+    gateway = str(deep.get("gateway") or "")
+    gateway_ok = _ping_host(gateway) if gateway else False
+    dns_ok = _dns_resolves("one.one.one.one")
     return {
         "local_ip": primary,
         "lan_ips": ips,
@@ -174,7 +178,161 @@ def check_lan_status(settings: Settings) -> dict[str, Any]:
         "udp_discover_bound": _udp_port_in_use(DISCOVER_PORT),
         "udp_port": DISCOVER_PORT,
         "hud_host_bind": settings.hud_host,
+        "gateway": gateway,
+        "gateway_reachable": gateway_ok,
+        "dns_servers": list(deep.get("dns_servers") or []),
+        "dns_ok": dns_ok,
+        "wifi_ssid": str(deep.get("wifi_ssid") or ""),
+        "wifi_signal_pct": int(deep.get("wifi_signal_pct") or 0),
+        "adapter": str(deep.get("adapter") or ""),
     }
+
+
+def speakable_lan_status(settings: Settings, report: dict[str, Any] | None = None) -> str:
+    """Short TTS-friendly LAN diagnosis for home Wi‑Fi / phone reachability."""
+    data = report if isinstance(report, dict) else check_lan_status(settings)
+    ip = str(data.get("local_ip") or "sin IP")
+    inet = "sí" if data.get("has_internet") else "no"
+    gw = str(data.get("gateway") or "")
+    gw_bit = ""
+    if gw:
+        gw_bit = f" Gateway {gw} {'responde' if data.get('gateway_reachable') else 'no responde'}."
+    dns_list = data.get("dns_servers") or []
+    dns_txt = ", ".join(str(x) for x in dns_list[:2]) if dns_list else "desconocido"
+    dns_ok = "ok" if data.get("dns_ok") else "fallando"
+    ssid = str(data.get("wifi_ssid") or "").strip()
+    wifi_bit = f" Wi‑Fi «{ssid}»" if ssid else ""
+    sig = int(data.get("wifi_signal_pct") or 0)
+    if ssid and sig > 0:
+        wifi_bit += f" al {sig}%"
+    udp = "activo" if data.get("udp_discover_bound") else "apagado"
+    urls = data.get("hud_urls") or []
+    url_bit = f" HUD: {urls[0]}." if urls else ""
+    tips: list[str] = []
+    if not data.get("has_internet"):
+        tips.append("Sin internet: reiniciá el router y revisá el cable/Wi‑Fi.")
+    elif gw and not data.get("gateway_reachable"):
+        tips.append("El gateway no responde: problema típico de router o Wi‑Fi.")
+    elif not data.get("dns_ok"):
+        tips.append("DNS flojo: probá 1.1.1.1 o 8.8.8.8 en los adaptadores.")
+    tip = (" " + tips[0]) if tips else ""
+    return (
+        f"Red local {ip}{wifi_bit}. Internet: {inet}."
+        f"{gw_bit} DNS ({dns_txt}): {dns_ok}. Discover UDP: {udp}.{url_bit}{tip}"
+    ).strip()
+
+
+def _lan_deep_probe() -> dict[str, Any]:
+    """Gateway / DNS / Wi‑Fi SSID via allowlisted PowerShell (Windows)."""
+    out: dict[str, Any] = {
+        "gateway": "",
+        "dns_servers": [],
+        "wifi_ssid": "",
+        "wifi_signal_pct": 0,
+        "adapter": "",
+    }
+    if os.name != "nt":
+        return out
+    ps = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1).NextHop
+$dns = @()
+try {
+  $dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 |
+    Where-Object { $_.ServerAddresses } |
+    Select-Object -ExpandProperty ServerAddresses -Unique)
+} catch {}
+$ssid = ''
+$sig = 0
+try {
+  $n = netsh wlan show interfaces 2>$null
+  if ($n) {
+    foreach ($line in $n) {
+      if ($line -match '^\s*SSID\s*:\s*(.+)$' -and $line -notmatch 'BSSID') { $ssid = $Matches[1].Trim() }
+      if ($line -match '^\s*Signal\s*:\s*(\d+)\s*%') { $sig = [int]$Matches[1] }
+    }
+  }
+} catch {}
+$adapter = ''
+try {
+  $adapter = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).InterfaceAlias
+} catch {}
+[pscustomobject]@{
+  gateway = [string]$gw
+  dns_servers = @($dns | Select-Object -First 4)
+  wifi_ssid = [string]$ssid
+  wifi_signal_pct = [int]$sig
+  adapter = [string]$adapter
+} | ConvertTo-Json -Compress
+"""
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    raw = (completed.stdout or "").strip()
+    if not raw:
+        return out
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return out
+    if not isinstance(data, dict):
+        return out
+    out["gateway"] = str(data.get("gateway") or "").strip()
+    dns = data.get("dns_servers") or []
+    if isinstance(dns, str):
+        dns = [dns]
+    out["dns_servers"] = [str(x).strip() for x in dns if str(x).strip()][:4]
+    out["wifi_ssid"] = str(data.get("wifi_ssid") or "").strip()
+    try:
+        out["wifi_signal_pct"] = int(data.get("wifi_signal_pct") or 0)
+    except (TypeError, ValueError):
+        out["wifi_signal_pct"] = 0
+    out["adapter"] = str(data.get("adapter") or "").strip()
+    return out
+
+
+def _ping_host(host: str, timeout_s: float = 1.2) -> bool:
+    target = (host or "").strip()
+    if not target:
+        return False
+    # UDP connect trick (no ICMP admin needed) — same idea as internet probe.
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout_s)
+        sock.connect((target, 80))
+        sock.close()
+        return True
+    except OSError:
+        pass
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["ping", "-n", "1", "-w", "800", target],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            blob = (completed.stdout or "") + (completed.stderr or "")
+            return completed.returncode == 0 or "ttl=" in blob.lower()
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return False
+
+
+def _dns_resolves(host: str = "one.one.one.one") -> bool:
+    try:
+        socket.getaddrinfo(host, 80, proto=socket.IPPROTO_TCP)
+        return True
+    except OSError:
+        return False
 
 
 def _ping_ollama(base_url: str, timeout: float = 1.2) -> bool:
