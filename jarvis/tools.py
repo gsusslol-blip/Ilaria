@@ -676,6 +676,11 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
         engine_used = best_engine
         _take(best_rows, best_engine)
 
+    # Refuse to ship / cache junk when no engine matched the query tokens.
+    if best_score < 0.25:
+        detail = "; ".join(errors[:2]) if errors else f"score={best_score:.2f}"
+        return f"No results. (baja relevancia: {detail})"
+
     if not collected:
         detail = "; ".join(errors[:2]) if errors else "sin detalle"
         return f"No results. ({detail})"
@@ -698,7 +703,8 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
             lines.append(f"Page extract skipped: {exc}")
 
     result = "\n".join(lines)
-    store(q, result, workspace, kind="web")
+    if best_score >= 0.35:
+        store(q, result, workspace, kind="web")
     return result
 
 

@@ -1,9 +1,9 @@
 {
-  "version": "1.5.8",
-  "min_required_android_client": "1.5.8",
+  "version": "1.5.9",
+  "min_required_android_client": "1.5.9",
   "changelog": [
-    "Quiet-Mode + memoria condensada + deep-link YouTube",
-    "HUD Reloj scroll + Fast-Path + health inbox FIT",
-    "Play Store: build-play.bat + firma release"
+    "Search relevance guard + speakable answers (no junk/F1 cache)",
+    "GK Colón + unified PC/Android/iOS 1.5.9",
+    "LAN-first phone clients; Piper WAV smoke"
   ]
 }

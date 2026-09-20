@@ -76,10 +76,13 @@ def main() -> int:
     # Android MediaPlayer style: query token, no Authorization header
     audio = client.get(f"/api/audio/{name}", params={"token": token})
     assert audio.status_code == 200, audio.text
-    assert audio.headers.get("content-type", "").startswith("audio/mpeg")
+    ctype = (audio.headers.get("content-type") or "").split(";")[0].strip().lower()
+    assert ctype in {"audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave"}, ctype
     body = audio.content
-    assert len(body) > 200 and body[:3] == b"ID3" or body[:2] == b"\xff\xfb" or len(body) > 500
-    print("GET ?token= ok", len(body), "bytes")
+    is_mp3 = body[:3] == b"ID3" or body[:2] == b"\xff\xfb"
+    is_wav = body[:4] == b"RIFF"
+    assert len(body) > 200 and (is_mp3 or is_wav or len(body) > 500)
+    print("GET ?token= ok", len(body), "bytes", ctype)
 
     # Bearer also works
     audio2 = client.get(f"/api/audio/{name}", headers=headers)

@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1201,17 +1202,40 @@ def create_hud(state: AppState) -> FastAPI:
 
 
 def _local_version_payload() -> dict[str, Any]:
-    from jarvis.pc_updater import load_channel_cache
+    from jarvis.pc_updater import load_channel_cache, version_gt
 
     channel = load_channel_cache() or {}
     android = android_update()
+    # Running build wins over a stale data/updates/channel.json cache.
+    cached_ver = str(channel.get("version") or "").strip()
+    app_ver = __version__
+    if cached_ver and version_gt(cached_ver, __version__):
+        app_ver = cached_ver
+    min_android = str(
+        channel.get("min_required_android_client")
+        or android.get("versionName")
+        or __version__
+    )
+    # Keep phone clients aligned with this PC build.
+    if version_gt(__version__, min_android):
+        min_android = __version__
+    changelog = list(channel.get("changelog") or [])
+    bundled = Path(__file__).resolve().parent / "channel.json"
+    if bundled.is_file():
+        try:
+            bundled_data = json.loads(bundled.read_text(encoding="utf-8"))
+            if str(bundled_data.get("version") or "") == __version__:
+                changelog = list(bundled_data.get("changelog") or changelog)
+                min_android = str(
+                    bundled_data.get("min_required_android_client") or min_android
+                )
+        except (OSError, json.JSONDecodeError):
+            pass
     return {
         "app": "Ilaria",
-        "version": str(channel.get("version") or __version__),
-        "min_required_android_client": str(
-            channel.get("min_required_android_client") or android.get("versionName") or __version__
-        ),
-        "changelog": list(channel.get("changelog") or []),
+        "version": app_ver,
+        "min_required_android_client": min_android,
+        "changelog": changelog,
         "android": {
             "versionCode": android.get("versionCode"),
             "versionName": android.get("versionName"),
