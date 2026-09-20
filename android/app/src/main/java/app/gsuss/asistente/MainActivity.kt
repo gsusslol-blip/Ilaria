@@ -123,7 +123,7 @@ private fun AppRoot(prefs: Prefs) {
             .imePadding(),
     ) {
         when (screen) {
-            "welcome" -> Column(Modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            "welcome" -> Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
                 Welcome(prefs) { screen = "chat" }
             }
             "chat" -> Chat(
@@ -132,7 +132,7 @@ private fun AppRoot(prefs: Prefs) {
                 onProfile = { screen = "profile" },
                 onOut = { screen = "welcome" },
             )
-            "profile" -> Column(Modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            "profile" -> Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
                 Profile(prefs, notes, onBack = { screen = "chat" })
             }
         }
@@ -150,7 +150,7 @@ private fun Welcome(prefs: Prefs, onIn: () -> Unit) {
     var err by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    Column(Modifier = Modifier.verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
         Text("ILARIA", color = Pink, letterSpacing = 8.sp, modifier = Modifier.padding(bottom = 8.dp))
         Text(
             "App independiente en tu celular. Pensá, anotá y abrí apps sin la PC. " +
