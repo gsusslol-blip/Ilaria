@@ -14,7 +14,7 @@ from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -961,7 +961,7 @@ def create_hud(state: AppState) -> FastAPI:
         return FileResponse(path, media_type=audio_media_type(path.name), filename=path.name)
 
     @app.post("/api/stt")
-    async def stt(request: Request, file: UploadFile = File(...)) -> dict[str, str]:
+    async def stt(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
         user = require_user(request)
         if not gate.allow(f"stt:{user.id}", 20, 60):
             raise HTTPException(status_code=429, detail="Demasiados audios. Esperá un segundo.")
@@ -973,7 +973,7 @@ def create_hud(state: AppState) -> FastAPI:
             )
         data = await file.read()
         if len(data) < 400:
-            return {"text": ""}
+            return {"text": "", "speaker": None}
         if len(data) > 6_000_000:
             raise HTTPException(status_code=400, detail="Audio demasiado largo.")
         name = file.filename or "audio.webm"
@@ -989,7 +989,76 @@ def create_hud(state: AppState) -> FastAPI:
                     "Reintentá o escribí el mensaje."
                 )
             raise HTTPException(status_code=502, detail=f"No pude transcribir: {detail}") from exc
-        return {"text": text}
+
+        speaker_payload: dict[str, Any] | None = None
+        try:
+            from jarvis.speaker_id import identify_speaker
+
+            hit = await asyncio.to_thread(identify_speaker, data, filename=name)
+            if hit is not None:
+                speaker_payload = {
+                    "label": hit.label,
+                    "display_name": hit.display_name,
+                    "username": hit.username,
+                    "score": round(hit.score, 3),
+                }
+        except Exception:
+            speaker_payload = None
+        return {"text": text, "speaker": speaker_payload}
+
+    @app.get("/api/speaker")
+    async def speaker_list(request: Request) -> dict[str, Any]:
+        require_user(request)
+        from jarvis.speaker_id import list_speakers, speakers_ready
+
+        return {"speakers": list_speakers(), "ready": speakers_ready()}
+
+    @app.post("/api/speaker/enroll")
+    async def speaker_enroll(
+        request: Request,
+        file: UploadFile = File(...),
+        label: str = Form(""),
+        display_name: str = Form(""),
+        username: str = Form(""),
+    ) -> dict[str, Any]:
+        user = require_user(request)
+        if not gate.allow(f"speaker-enroll:{user.id}", 10, 60):
+            raise HTTPException(status_code=429, detail="Demasiados enrolamientos.")
+        data = await file.read()
+        if len(data) < 800:
+            raise HTTPException(status_code=400, detail="Audio demasiado corto.")
+        name = file.filename or "enroll.wav"
+        tag = (label or user.username or "voz").strip()
+        from jarvis.speaker_id import enroll_speaker
+
+        try:
+            result = await asyncio.to_thread(
+                enroll_speaker,
+                data,
+                tag,
+                filename=name,
+                display_name=display_name or user.display_name,
+                username=username or user.username,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"No pude enrolar: {exc}") from exc
+        return result
+
+    @app.delete("/api/speaker/{label}")
+    async def speaker_delete(label: str, request: Request) -> dict[str, Any]:
+        user = require_user(request)
+        from jarvis.speaker_id import remove_speaker
+
+        # Members may only delete their own label / username match.
+        key = (label or "").strip().lower()
+        if not user.is_owner and key not in {user.username.lower(), f"u{user.id}"}:
+            raise HTTPException(status_code=403, detail="Solo podés borrar tu propia huella.")
+        ok = remove_speaker(key)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Huella no encontrada.")
+        return {"ok": True, "label": key}
 
     @app.post("/api/wake/hud-listening")
     async def wake_hud_listening(payload: WakeHudIn, request: Request) -> dict[str, Any]:

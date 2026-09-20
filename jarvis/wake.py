@@ -246,6 +246,27 @@ def _handle_wake(
         reply = "No te escuché bien. Decilo otra vez después de llamarme."
         _announce(brain, reply)
         return
+
+    # Speaker ID: switch brain to the enrolled voice when possible.
+    speaker_user = owner
+    speaker_name = owner.display_name
+    try:
+        from jarvis.speaker_id import identify_speaker, speakable_identify
+
+        hit = identify_speaker(wav, filename="wake.wav")
+        if hit is not None:
+            print(f"[+] Wake speaker: {hit.label} score={hit.score:.3f}")
+            if hit.username:
+                matched = state.accounts.get_by_username(hit.username)
+                if matched is not None and not matched.disabled:
+                    speaker_user = matched
+            speaker_name = hit.display_name
+            brain = state.brain_for(speaker_user)
+            settings = brain.settings
+            brain.bus.push(speakable_identify(hit), audio_url=None)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[-] Wake speaker-id: {exc}")
+
     try:
         text = transcribe_audio(settings, wav, "wake.wav")
     except Exception as exc:  # noqa: BLE001
@@ -255,9 +276,9 @@ def _handle_wake(
         reply = "No te escuché bien. Decilo otra vez después de llamarme."
         _announce(brain, reply)
         return
-    print(f"[+] Wake STT: {text}")
-    brain.bus.push(f"(vos) {text}", audio_url=None)
-    answer = brain.reply(f"wake-{owner.id}", text)
+    print(f"[+] Wake STT ({speaker_name}): {text}")
+    brain.bus.push(f"({speaker_name}) {text}", audio_url=None)
+    answer = brain.reply(f"wake-{speaker_user.id}", text)
     _announce(brain, answer)
 
 
