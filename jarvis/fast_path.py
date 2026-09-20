@@ -221,6 +221,11 @@ def match_fast_path(
     ):
         return "system_status", {}, "pc_status"
 
+    from jarvis.pc_diagnose import looks_like_pc_slow
+
+    if looks_like_pc_slow(text):
+        return "diagnose_pc", {}, "pc_slow"
+
     if re.fullmatch(
         r"(?:captura(?:\s+de\s+pantalla)?|screenshot|sac[aá]\s+(?:una\s+)?captura)",
         lower,
@@ -397,6 +402,10 @@ def _speakable_fast_result(tool: str, params: dict[str, Any], result: str) -> st
         return "Timer listo."
     if tool == "open_maps":
         return "Abriendo el mapa."
+    if tool == "system_status":
+        return (result or "").strip()[:220] or "Estado listo."
+    if tool == "diagnose_pc":
+        return (result or "").strip()[:400] or "Listo el diagnóstico de la PC."
     if tool == "open_app":
         name = str(params.get("name") or "").strip().lower()
         special = {

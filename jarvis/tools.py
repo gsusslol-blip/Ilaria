@@ -423,6 +423,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {},
     ),
     _fn(
+        "diagnose_pc",
+        "Measure THIS PC performance right now: CPU%%, RAM%%, free disk C:, top RAM processes, "
+        "and short upgrade/cleanup advice (bottlenecks). "
+        "Use for 'por qué anda lenta la PC', 'cuello de botella', 'qué me conviene mejorar'. "
+        "Do NOT web_search for that — inspect the machine.",
+        {},
+    ),
+    _fn(
         "relaunch_service",
         "One-step allowlisted remediación of ILARIA stack only. "
         "service: ollama | piper | ha_ping. No arbitrary shell. Owner-oriented.",
@@ -1012,6 +1020,8 @@ def make_executor(
             from jarvis.self_healing import health_report_text
 
             return health_report_text(settings)
+        if name == "diagnose_pc":
+            return actions.diagnose_pc()
         if name == "relaunch_service":
             from jarvis.self_healing import relaunch_service
 

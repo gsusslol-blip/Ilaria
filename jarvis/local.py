@@ -120,6 +120,11 @@ def try_local_command(
     if re.search(r"\b(estado(?:\s+de)?(?:\s+la)?\s+pc|qu[eé] hay abierto|qu[eé] apps)\b", lower):
         return run("system_status")
 
+    from jarvis.pc_diagnose import looks_like_pc_slow
+
+    if looks_like_pc_slow(raw):
+        return run("diagnose_pc")
+
     if re.search(
         r"\b(diagn[oó]stic|salud(?:\s+del)?\s+sistema|qu[eé] est[aá] ca[ií]d|"
         r"estado(?:\s+de)?(?:\s+)?ilaria|revis[aá](?:\s+el)?\s+stack|"

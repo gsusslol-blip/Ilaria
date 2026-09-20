@@ -92,6 +92,7 @@ TOOL ROUTING:
   is learning; if they ask “haceme la tarea”, solve it AND teach the method. Never invent sources.
 - Time only: now. Clock + key apps: system_status.
 - Stack/infra diagnose (“diagnostica”, “qué está caído”, Ollama/Piper/HA/red): get_system_health
+- PC lenta / cuello de botella / qué mejorar en hardware: diagnose_pc (local metrics — NEVER web_search)
   then at most ONE relaunch_service (ollama|piper|ha_ping). LAN/phone reachability: check_lan_status.
 - “Tomá nota / bitácora / diario”: daily_journal. Generic lists: note.
 - Exact volume %: set_volume. Mute/skip/play: media. Undo recent volume/clipboard: undo_last.

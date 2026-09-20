@@ -187,6 +187,7 @@ class Actions:
             "Will not: bank logins, card payments, silent WhatsApp/SMS send, "
             "reading the SMS inbox, root, or hardware you do not own.\n"
             "Stack diagnose: get_system_health / check_lan_status; "
+            "PC lenta / bottlenecks / qué mejorar: diagnose_pc (local CPU/RAM/disk); "
             "owner remediación allowlisted: relaunch_service (ollama|piper|ha_ping).\n"
             "On the Ilaria Android/iOS app: phone_hands (dialer, SMS draft, WhatsApp draft, maps, "
             "apps, torch, camera, gallery, volume, alarm/timer, settings, share)."
@@ -675,6 +676,12 @@ class Actions:
         apps = _running_watchlist()
         found = ", ".join(apps) if apps else "ninguna de las clave (Chrome, Cursor, Discord, Excel)"
         return f"{when}\nAplicaciones clave: {found}."
+
+    def diagnose_pc(self) -> str:
+        """Live bottleneck snapshot for 'PC lenta' — local metrics, not web search."""
+        from jarvis.pc_diagnose import speakable_pc_diagnosis
+
+        return speakable_pc_diagnosis()
 
     def daily_journal(self, content: str) -> str:
         text = content.strip()
