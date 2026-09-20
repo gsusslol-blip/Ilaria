@@ -42,7 +42,14 @@ _NOISE_LINE = re.compile(
     re.I,
 )
 _NOISE_CHUNK = re.compile(
-    r"\b(prezi|timetoast|l[ií]neas?\s+de\s+nazca|descubriamerica|by\s+\w+\s+rojas)\b",
+    r"\b(prezi|timetoast|l[ií]neas?\s+de\s+nazca|descubriamerica|by\s+\w+\s+rojas|"
+    r"countriq|haz\s+clic\s+aqu[ií]|te\s+explicamos\s+qu[eé]|world\s+heritage\s+site|"
+    r"descubre\s+el\s+significado|todas\s+las\s+acepciones|mapa\s+y\s+vecinos)\b",
+    re.I,
+)
+_SEO_TITLE = re.compile(
+    r"\|\s*\w+\s*$|^\s*·?\s*(mapa|biograf[ií]a|definici[oó]n|c[oó]mo\s+termin|"
+    r"qu[eé]\s+a[nñ]o\s+exactamente|esta\s+fecha\s+recuerda)\b",
     re.I,
 )
 _ANSWER_HINT = re.compile(
@@ -196,6 +203,8 @@ def speakable_from_search(
             score += 4
         if _NOISE_CHUNK.search(clean) or _NOISE_CHUNK.search(chunk):
             score -= 4
+        if _SEO_TITLE.search(clean):
+            score -= 3
         # Prefer statements over clickbait questions.
         if clean.strip().startswith("¿") or clean.strip().endswith("?"):
             score -= 3
