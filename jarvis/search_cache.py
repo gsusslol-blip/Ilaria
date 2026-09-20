@@ -46,10 +46,16 @@ def _normalize_query(text: str) -> str:
 def _freshness_query(text: str) -> bool:
     return bool(
         re.search(
-            r"\b(hoy|ahora|precio|cotiz|dolar|dólar|blue|noticia|clima|weather|temp)\b",
+            r"\b(hoy|ahora|precio|cotiz|dolar|dólar|blue|mep|ccl|oficial|"
+            r"noticia|clima|weather|temp|bitcoin|btc|eth|crypto|cripto)\b",
             (text or "").lower(),
         )
     )
+
+
+def is_freshness_query(text: str) -> bool:
+    """Public facts that must be fetched live (FX, news, weather, spot prices)."""
+    return _freshness_query(text)
 
 
 def _tokens(text: str) -> list[str]:

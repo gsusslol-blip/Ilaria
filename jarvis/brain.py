@@ -81,6 +81,8 @@ _OPINION_HINT = (
     r"\b(m[aá]s\s+linda|m[aá]s\s+lindo|m[aá]s\s+hermosa|m[aá]s\s+hermoso|m[aá]s\s+guap[oa]|"
     r"m[aá]s\s+fea|m[aá]s\s+feo|qui[eé]n\s+es\s+m[aá]s|prefer[ií]s|te\s+gusta\s+m[aá]s|"
     r"m[aá]s\s+bonit[oa]|mejor\s+parecida|m[aá]s\s+atractiv|"
+    r"cu[aá]l\s+(?:te\s+)?gusta\s+m[aá]s|qui[eé]n\s+(?:te\s+)?cae\s+mejor|"
+    r"m[aá]s\s+rico|m[aá]s\s+rica|favorit[oa]|tu\s+favorit|"
     r"qui[eé]n\s+es\s+mejor|qui[eé]n\s+mejor|mejor\s+entre|"
     r"\bo\b.{0,40}\bqui[eé]n\s+(?:es\s+)?mejor|"
     r"messi\s+o\s+cr7|cr7\s+o\s+messi|chaewon\s+o\s+kazuha)\b"
@@ -409,7 +411,12 @@ class Brain:
                 return local
         except Exception:  # noqa: BLE001
             pass
-        # One shot web_search for question-like turns.
+        # One shot web_search for question-like turns (never for subjective taste).
+        if re.search(_OPINION_HINT, text, re.I):
+            return (
+                "Eso es gustos, no hay una respuesta objetiva. "
+                "Contame qué preferís vos y lo bancamos — yo no armo ranking de personas ni de gustos."
+            )
         if _looks_like_question(text) or re.search(_SCHOOL_HINT, text, re.I) or re.search(
             _FACT_HINT, text, re.I
         ):
