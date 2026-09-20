@@ -1,4 +1,4 @@
-# Ilaria 1.5.8 — asistente local-first (estilo F.R.I.D.A.Y.)
+# Ilaria 1.5.9 — asistente local-first (estilo F.R.I.D.A.Y.)
 
 Repo: [gsusslol-blip/Ilaria](https://github.com/gsusslol-blip/Ilaria) · Releases: [latest](https://github.com/gsusslol-blip/Ilaria/releases/latest)
 

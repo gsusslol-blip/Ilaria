@@ -18,6 +18,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.gsuss.ilaria
         INFOPLIST_FILE: Ilaria/Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 25
+        MARKETING_VERSION: "1.5.9"
         GENERATE_INFOPLIST_FILE: false
