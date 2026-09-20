@@ -8,27 +8,10 @@ from typing import Callable
 
 from jarvis.config import Settings
 from jarvis.memory import Memory
+from jarvis.subjective import APPRECIATION_REPLY as _APPRECIATION_REPLY
+from jarvis.subjective import fixed_subjective_reply
 
 Execute = Callable[[str, str], str]
-
-# Subjective taste / appreciation — fixed soft reply, never web_search.
-_APPRECIATION_RE = re.compile(
-    r"\b("
-    r"m[aá]s\s+lind[oa]|m[aá]s\s+hermos[oa]|m[aá]s\s+guap[oa]|m[aá]s\s+bonit[oa]|"
-    r"m[aá]s\s+fea|m[aá]s\s+feo|m[aá]s\s+atractiv|"
-    r"qui[eé]n\s+es\s+m[aá]s|prefer[ií]s|te\s+gusta\s+m[aá]s|prefer[ií]s\s+a|"
-    r"cu[aá]l\s+(?:te\s+)?gusta\s+m[aá]s|qui[eé]n\s+(?:te\s+)?cae\s+mejor|"
-    r"m[aá]s\s+rico|m[aá]s\s+rica|favorit[oa]|tu\s+favorit|"
-    r"qui[eé]n\s+es\s+mejor|qui[eé]n\s+mejor|mejor\s+entre|"
-    r"messi\s+o\s+cr7|cr7\s+o\s+messi"
-    r")\b",
-    re.I,
-)
-
-_APPRECIATION_REPLY = (
-    "Eso es gustos, no hay una respuesta objetiva. "
-    "Contame qué preferís vos y lo bancamos — yo no armo ranking de personas ni de gustos."
-)
 
 
 def try_local_command(
@@ -58,8 +41,9 @@ def try_local_command(
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
 
-    if _APPRECIATION_RE.search(raw):
-        return _APPRECIATION_REPLY
+    subjective = fixed_subjective_reply(raw)
+    if subjective:
+        return subjective
 
     fixed = _gk_fix(raw)
     if fixed:
@@ -125,6 +109,17 @@ def try_local_command(
     if looks_like_pc_slow(raw):
         return run("diagnose_pc")
 
+    from jarvis.windows_howto import match_windows_howto, run_windows_howto
+
+    if match_windows_howto(raw):
+        # Prefer the Actions path (opens Settings) via tool; fall back to pure local.
+        try:
+            return run("windows_howto", query=raw)
+        except Exception:
+            spoken = run_windows_howto(raw)
+            if spoken:
+                return spoken
+
     if re.search(
         r"\b(diagn[oó]stic|salud(?:\s+del)?\s+sistema|qu[eé] est[aá] ca[ií]d|"
         r"estado(?:\s+de)?(?:\s+)?ilaria|revis[aá](?:\s+el)?\s+stack|"
@@ -134,8 +129,15 @@ def try_local_command(
         return run("get_system_health")
 
     if re.search(
-        r"\b(estado(?:\s+de)?(?:\s+la)?\s+(?:red|lan|wifi)|ip(?:\s+local)?|"
-        r"descubrimiento|puerto\s+8788)\b",
+        r"\b("
+        r"estado(?:\s+de)?(?:\s+la)?\s+(?:red|lan|wifi|wi[\-\s]?fi)|"
+        r"ip(?:\s+local)?|descubrimiento|puerto\s+8788|"
+        r"no\s+me\s+anda\s+(?:el\s+)?(?:wifi|wi[\-\s]?fi|internet|red)|"
+        r"(?:wifi|internet|red)\s+(?:ca[ií]d|muert|lent)|"
+        r"revis[aá]\s+(?:la\s+)?(?:red|lan|wifi|internet|dns|gateway)|"
+        r"qu[eé]\s+pasa\s+con\s+(?:la\s+)?(?:red|wifi|internet)|"
+        r"dns|gateway|se[nñ]al\s+(?:del\s+)?wifi"
+        r")\b",
         lower,
     ):
         return run("check_lan_status")
@@ -450,9 +452,32 @@ def try_local_command(
     )
     if yt:
         q = yt.group(1).strip()
+        # Vague replay — never search YouTube for "eso" / "lo de ayer".
+        if re.fullmatch(
+            r"(?:eso|eso\s+mismo|lo\s+mismo|lo\s+de\s+antes|lo\s+de\s+ayer|"
+            r"lo\s+[uú]ltimo|la\s+[uú]ltima(?:\s+canci[oó]n)?)",
+            q,
+            re.I,
+        ):
+            return run("replay_last_music", hint=raw)
         if android:
             return run("phone_hands", action="youtube", target=q)
         return run("play_music", query=q, platform="youtube")
+
+    if re.search(
+        r"\b("
+        r"pon(?:eme|[eé])?\s+(?:eso|eso\s+mismo|lo\s+mismo|lo\s+de\s+antes|lo\s+anterior|"
+        r"lo\s+de\s+ayer|lo\s+[uú]ltimo|la\s+[uú]ltima(?:\s+canci[oó]n)?|"
+        r"esa\s+canci[oó]n|el\s+tema)|"
+        r"reproduc[ií]\s+(?:eso|lo\s+mismo|lo\s+de\s+ayer|lo\s+[uú]ltimo)|"
+        r"otra\s+vez\s+(?:eso|lo\s+mismo|la\s+canci[oó]n)|"
+        r"de\s+nuevo\s+(?:eso|lo\s+mismo)|"
+        r"la\s+[uú]ltima\s+canci[oó]n|"
+        r"lo\s+que\s+(?:escuch[eé]|puse|pusimos)\s+(?:ayer|antes|hoy)"
+        r")\b",
+        lower,
+    ):
+        return run("replay_last_music", hint=raw)
 
     translate = None
     from jarvis.translate import parse_translate_request
@@ -513,6 +538,13 @@ def try_local_command(
                 return run("phone_hands", action="open_app", target=target)
             return run("open_app", name=target)
         if query and query not in apps:
+            if re.fullmatch(
+                r"(?:eso|eso\s+mismo|lo\s+mismo|lo\s+de\s+antes|lo\s+de\s+ayer|"
+                r"lo\s+[uú]ltimo|la\s+[uú]ltima(?:\s+canci[oó]n)?|el\s+tema)",
+                query,
+                re.I,
+            ):
+                return run("replay_last_music", hint=raw)
             if android:
                 action = "youtube" if platform == "youtube" else "music"
                 return run("phone_hands", action=action, target=query)
@@ -527,8 +559,23 @@ def try_local_command(
         r"(diario( de hoy)?|minuta(s)?( de hoy)?|le[eé] el diario|mostr[aá] el diario|"
         r"en qu[eé] me qued[eé]|qu[eé] anot[eé]|bit[aá]cora( de hoy)?)",
         lower,
+    ) or re.search(
+        r"("
+        r"en\s+qu[eé]\s+me\s+qued\w*|"
+        r"qu[eé]\s+anot(?:[eé]|amos)\w*|"
+        r"bit[aá]cora\s+de\s+ayer|"
+        r"diario\s+de\s+ayer|"
+        r"resumen\s+(?:de\s+)?(?:la\s+)?bit[aá]cora|"
+        r"contexto\s+(?:de\s+)?ayer|"
+        r"qu[eé]\s+hice\s+ayer"
+        r")",
+        lower,
     ):
-        return run("read_daily_journal")
+        if re.search(r"\bayer\b", lower) and not re.search(r"qued", lower):
+            return run("read_daily_journal", which="yesterday")
+        if re.search(r"(qued|ayer|resumen|contexto|anot)", lower):
+            return run("read_daily_journal", which="recent")
+        return run("read_daily_journal", which="today")
 
     journal = re.match(
         r"^(?:tom[aá]\s+nota(?:\s+de(?:\s+que)?)?|anot[aá]\s+en\s+el\s+diario(?:\s+que)?|"
@@ -538,6 +585,11 @@ def try_local_command(
     )
     if journal:
         return run("daily_journal", content=journal.group(1).strip())
+
+    from jarvis.shop_compare import looks_like_shop_compare
+
+    if looks_like_shop_compare(raw):
+        return run("shop_compare", query=raw)
 
     # Weather — skip science / material questions ("temperatura ambiente", ebullición).
     if re.search(r"\b(clima|tiempo|llueve|pronostico|pronóstico)\b", lower) or (
