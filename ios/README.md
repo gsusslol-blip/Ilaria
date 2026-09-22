@@ -1,6 +1,6 @@
 # Ilaria iOS
 
-Cliente **independiente** en el iPhone (versión **1.5.9**, misma línea que Android/PC).
+Cliente **independiente** en el iPhone (versión **1.6.0**, misma línea que Android/PC).
 La PC es opcional: sincronizás cuando querés (mismo Wi‑Fi o URL remota).
 
 Misma superficie de comandos que Android (`phone_hands` + `PhoneLocal`).

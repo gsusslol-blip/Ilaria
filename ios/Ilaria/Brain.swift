@@ -46,7 +46,7 @@ final class Brain {
         let battery = UIDevice.current.batteryLevel
         let device: [String: Any] = [
             "model": UIDevice.current.model,
-            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.5.9",
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.6.0",
             "battery": battery >= 0 ? Int(battery * 100) : -1,
         ]
         // speak:false — iOS uses AVSpeech locally; avoid unused Piper render on the PC.
