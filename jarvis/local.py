@@ -8,8 +8,8 @@ from typing import Callable
 
 from jarvis.config import Settings
 from jarvis.memory import Memory
+from jarvis.policy_replies import fixed_policy_reply
 from jarvis.subjective import APPRECIATION_REPLY as _APPRECIATION_REPLY
-from jarvis.subjective import fixed_subjective_reply
 
 Execute = Callable[[str, str], str]
 
@@ -41,7 +41,7 @@ def try_local_command(
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
 
-    subjective = fixed_subjective_reply(raw)
+    subjective = fixed_policy_reply(raw)
     if subjective:
         return subjective
 
@@ -386,6 +386,13 @@ def try_local_command(
         action = "off" if re.search(r"\bapag", lower) else "on"
         return run("control_device", entity_id=entity, action=action)
 
+    from jarvis.ha_scenes import parse_ha_routine
+
+    ha_routine = parse_ha_routine(raw)
+    if ha_routine:
+        kind, name = ha_routine
+        return run("run_ha_routine", kind=kind, name=name)
+
     if re.search(
         r"\b(apag[aá]|shutdown)\b.{0,24}\b(pc|computadora|equipo|windows|sistema)\b|"
         r"\b(apaga(?:r)?\s+la\s+(?:pc|computadora|equipo))\b",
@@ -590,6 +597,58 @@ def try_local_command(
 
     if looks_like_shop_compare(raw):
         return run("shop_compare", query=raw)
+
+    from jarvis.code_assist import looks_like_code_help
+
+    if looks_like_code_help(raw):
+        return run("code_assist", query=raw)
+
+    from jarvis.calendar_local import parse_calendar_request, parse_when
+
+    cal = parse_calendar_request(raw, timezone=settings.timezone)
+    if cal:
+        action, params = cal
+        return run(
+            "calendar_event",
+            action=action,
+            title=str(params.get("title") or ""),
+            when_iso=str(params.get("when_iso") or ""),
+            offset_days=int(params.get("offset_days") or 0),
+        )
+
+    # Natural reminder: "recordame mañana a las 15 la reunión"
+    rem = re.match(
+        r"^(?:record[aá]me|acordame|avisame|avis[aá]me)\s+(.+)$",
+        raw,
+        re.I | re.S,
+    )
+    if rem:
+        blob = rem.group(1).strip()
+        when = parse_when(blob, timezone=settings.timezone)
+        if when is not None:
+            label = re.sub(
+                r"^(?:hoy|ma[nñ]ana|pasado\s+ma[nñ]ana)\s*(?:a\s+las?\s+\d{1,2}(?::\d{2})?\s*)?",
+                "",
+                blob,
+                flags=re.I,
+            ).strip(" .,")
+            label = re.sub(r"\b(?:a\s+las?\s+\d{1,2}(?::\d{2})?)\b", "", label, flags=re.I).strip(" .,")
+            return run(
+                "set_reminder",
+                when_iso=when.isoformat(timespec="seconds"),
+                text=label or "Recordatorio",
+            )
+
+    from jarvis.email_parse import parse_email_request
+
+    mail = parse_email_request(raw)
+    if mail:
+        return run(
+            "draft_or_send_email",
+            to=mail["to"],
+            subject=mail["subject"],
+            body=mail["body"],
+        )
 
     # Weather — skip science / material questions ("temperatura ambiente", ebullición).
     if re.search(r"\b(clima|tiempo|llueve|pronostico|pronóstico)\b", lower) or (

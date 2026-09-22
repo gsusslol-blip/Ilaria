@@ -736,6 +736,52 @@ class Actions:
 
         return speakable_lan_status(self.settings, check_lan_status(self.settings))
 
+    def code_assist(self, query: str = "") -> str:
+        from jarvis.code_assist import run_code_assist
+
+        return run_code_assist(query or "", open_app_fn=self.open_app)
+
+    def calendar_event(self, action: str = "next", title: str = "", when_iso: str = "", offset_days: int = 0) -> str:
+        from jarvis.calendar_local import speakable_calendar
+
+        params: dict[str, object] = {
+            "title": title,
+            "when_iso": when_iso,
+            "offset_days": offset_days,
+            "limit": 5,
+        }
+        return speakable_calendar(self.workspace, action, params, timezone=self.settings.timezone)
+
+    def run_ha_routine(self, kind: str = "scene", name: str = "") -> str:
+        from jarvis.ha_scenes import run_ha_routine
+
+        return run_ha_routine(
+            self.settings,
+            kind=kind or "scene",
+            name=name or "",
+            is_owner=self.is_owner,
+        )
+
+    def draft_or_send_email(self, to: str, subject: str, body: str) -> str:
+        """Send via SMTP when configured; otherwise open a mailto draft."""
+        if self.settings.has_smtp:
+            return self.send_email(to, subject, body)
+        from jarvis.email_parse import mailto_url
+
+        url = mailto_url(to, subject, body)
+        try:
+            if os.name == "nt":
+                os.startfile(url)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(url)
+            note = "Abrí un borrador de mail."
+        except OSError:
+            note = "No pude abrir el cliente de mail."
+        return (
+            f"{note} Destino {to}. "
+            "Para envío directo configurá SMTP_HOST / SMTP_USER / SMTP_PASSWORD en .env."
+        )
+
     def daily_journal(self, content: str) -> str:
         text = content.strip()
         if not text:

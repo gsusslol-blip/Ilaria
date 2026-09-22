@@ -483,6 +483,50 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     ),
     _fn(
+        "code_assist",
+        "Programming / debug help: open Cursor or VS Code and return a short error digest. "
+        "Use for traceback, bug, 'no compila', 'explicame este error'. "
+        "Do NOT read a whole file aloud — keep the spoken reply short.",
+        {
+            "query": {"type": "string", "description": "Error text or coding ask"},
+        },
+        ["query"],
+    ),
+    _fn(
+        "calendar_event",
+        "Local calendar in the user workspace (no Google sync). "
+        "action=add|next|today|day. For add pass title + when_iso. "
+        "Use for 'agendá mañana a las 10…', 'qué tengo hoy'.",
+        {
+            "action": {"type": "string", "description": "add | next | today | day"},
+            "title": {"type": "string"},
+            "when_iso": {"type": "string"},
+            "offset_days": {"type": "integer"},
+        },
+        ["action"],
+    ),
+    _fn(
+        "run_ha_routine",
+        "Activate a Home Assistant scene or owner script by friendly name or entity_id. "
+        "Use for 'activá la escena noche', 'modo cine', 'ejecutá script.xxx'.",
+        {
+            "kind": {"type": "string", "description": "scene | script"},
+            "name": {"type": "string", "description": "Friendly name or entity_id"},
+        },
+        ["name"],
+    ),
+    _fn(
+        "draft_or_send_email",
+        "Send email via SMTP if configured; otherwise open a mailto draft. "
+        "Use for 'mandá un mail a user@x.com asunto … cuerpo …'.",
+        {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+        },
+        ["to", "subject", "body"],
+    ),
+    _fn(
         "relaunch_service",
         "One-step allowlisted remediación of ILARIA stack only. "
         "service: ollama | piper | ha_ping. No arbitrary shell. Owner-oriented.",
@@ -1090,6 +1134,26 @@ def make_executor(
             return run_shop_compare(q, execute)
         if name == "replay_last_music":
             return actions.replay_last_music(str(args.get("hint") or args.get("query") or ""))
+        if name == "code_assist":
+            return actions.code_assist(str(args.get("query") or args.get("text") or ""))
+        if name == "calendar_event":
+            return actions.calendar_event(
+                action=str(args.get("action") or "next"),
+                title=str(args.get("title") or ""),
+                when_iso=str(args.get("when_iso") or args.get("when") or ""),
+                offset_days=int(args.get("offset_days") or 0),
+            )
+        if name == "run_ha_routine":
+            return actions.run_ha_routine(
+                kind=str(args.get("kind") or "scene"),
+                name=str(args.get("name") or args.get("entity_id") or ""),
+            )
+        if name == "draft_or_send_email":
+            return actions.draft_or_send_email(
+                str(args.get("to") or ""),
+                str(args.get("subject") or ""),
+                str(args.get("body") or ""),
+            )
         if name == "relaunch_service":
             from jarvis.self_healing import relaunch_service
 
@@ -1118,6 +1182,10 @@ PC_TOOLS = {
     "app_search_action",
     "replay_last_music",
     "windows_howto",
+    "code_assist",
+    "calendar_event",
+    "run_ha_routine",
+    "draft_or_send_email",
     "set_volume",
     "undo_last",
     "send_email",

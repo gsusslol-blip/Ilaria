@@ -11,9 +11,6 @@ THERMOSTAT_MIN = 18.0
 THERMOSTAT_MAX = 26.0
 
 MEMBER_DOMAINS = frozenset({"light", "switch", "fan", "input_boolean"})
-OWNER_DOMAINS = frozenset(
-    {"climate", "scene", "lock", "cover", "alarm_control_panel", "input_number"}
-)
 DENIED_DOMAINS = frozenset(
     {
         "shell_command",
@@ -25,9 +22,11 @@ DENIED_DOMAINS = frozenset(
         "recorder",
         "system_log",
         "persistent_notification",
-        "script",
         "template",
     }
+)
+OWNER_DOMAINS = frozenset(
+    {"climate", "scene", "script", "lock", "cover", "alarm_control_panel", "input_number"}
 )
 ON_OFF = frozenset({"turn_on", "turn_off", "toggle"})
 ACTION_ALIASES = {
@@ -119,6 +118,11 @@ def authorize_ha_call(
 
     if domain == "scene" and service == "turn_on":
         return {"domain": domain, "service": service, "payload": payload}
+
+    if domain == "script" and service in {"turn_on", "toggle"}:
+        if not entity:
+            raise HaDenied("Script: hace falta entity_id (script.xxx).")
+        return {"domain": domain, "service": "turn_on", "payload": payload}
 
     if domain == "input_number" and service == "set_value":
         raise HaDenied("input_number bloqueado (evita inyectar rangos).")
