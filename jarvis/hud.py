@@ -15,7 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -103,6 +103,7 @@ class RegisterIn(BaseModel):
     city: str = ""
     packs: list[str] = Field(default_factory=list)
     groq_key: str = ""
+    tts_voice: str = ""
 
 
 class LoginIn(BaseModel):
@@ -408,6 +409,21 @@ def create_hud(state: AppState) -> FastAPI:
     async def favicon() -> FileResponse:
         return FileResponse(STATIC_DIR / "favicon.svg")
 
+    @app.get("/iphone", response_model=None)
+    async def iphone_setup() -> HTMLResponse:
+        return HTMLResponse((STATIC_DIR / "iphone.html").read_text(encoding="utf-8"))
+
+    @app.get("/ilaria-ca.mobileconfig")
+    async def iphone_ca_profile() -> FileResponse:
+        from jarvis.certs import profile_file
+
+        path = profile_file()
+        return FileResponse(
+            path,
+            media_type="application/x-apple-aspen-config",
+            filename="Ilaria-CA.mobileconfig",
+        )
+
     @app.get("/welcome", response_model=None)
     async def welcome(request: Request) -> RedirectResponse | FileResponse:
         # Persistent cookie: skip login screen when already signed in.
@@ -472,6 +488,7 @@ def create_hud(state: AppState) -> FastAPI:
                 city=payload.city,
                 packs=normalize_pack_ids(payload.packs),
                 groq_key=payload.groq_key,
+                tts_voice=payload.tts_voice,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

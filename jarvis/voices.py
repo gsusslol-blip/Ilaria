@@ -9,6 +9,7 @@ from typing import Any
 from jarvis.piper_tts import _voice_dirs
 
 DEFAULT_VOICE_ID = "ilaria"
+LANG_DEFAULT_VOICE = {"es": "ilaria", "en": "jenny", "it": "elsa"}
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,11 @@ def get_voice(voice_id: str | None) -> VoiceProfile:
 
 def normalize_voice_id(raw: str | None) -> str:
     return get_voice(raw).id
+
+
+def voice_for_lang(lang: str | None) -> str:
+    key = (lang or "es").strip().lower()
+    return LANG_DEFAULT_VOICE.get(key, DEFAULT_VOICE_ID)
 
 
 def resolve_runtime(voice_id: str | None) -> dict[str, str]:

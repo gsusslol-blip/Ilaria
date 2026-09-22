@@ -506,6 +506,14 @@
           <input id="reg-groq" name="groq_key" placeholder="gsk_…" />
         </div>
       </div>
+      <div class="input-group plain">
+        <label for="reg-lang">Idioma</label>
+        <select id="reg-lang" name="ui_lang">
+          <option value="es">Español</option>
+          <option value="en">English</option>
+          <option value="it">Italiano</option>
+        </select>
+      </div>
       <label class="section-label">Intereses</label>
       <div class="packs" id="packs"></div>
       <p class="hint">Key gratis: <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">console.groq.com/keys</a></p>
@@ -743,6 +751,7 @@
         address_as: f.get("address_as") || f.get("display_name"),
         city: f.get("city") || "",
         groq_key: f.get("groq_key") || "",
+        tts_voice: ({ es: "ilaria", en: "jenny", it: "elsa" })[f.get("ui_lang")] || "ilaria",
         packs: [...selected],
       }, document.getElementById("regErr"));
     });

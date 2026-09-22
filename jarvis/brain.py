@@ -192,9 +192,12 @@ class Brain:
     def _chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         # Keep Ollama model + KV prompt cache warm (default unload is ~5 min).
         if self.endpoint.label in {"ollama", "llamacpp"}:
-            extra = dict(kwargs.pop("extra_body", None) or {})
-            extra.setdefault("keep_alive", os.getenv("OLLAMA_KEEP_ALIVE", "60m"))
-            kwargs["extra_body"] = extra
+            # keep_alive is Ollama-only. The bundled llama-server rejects it.
+            base = (self.settings.ollama_base_url or "")
+            if "11434" in base:
+                extra = dict(kwargs.pop("extra_body", None) or {})
+                extra.setdefault("keep_alive", os.getenv("OLLAMA_KEEP_ALIVE", "60m"))
+                kwargs["extra_body"] = extra
         if self.endpoint.label == "groq":
             last: BaseException | None = None
             for model in groq_model_candidates(self.settings):

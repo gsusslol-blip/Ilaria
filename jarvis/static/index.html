@@ -748,7 +748,7 @@
         <button type="button" class="mic" id="free" title="Manos libres. Apagálo si escuchás música: el mic captura el parlante.">Mute</button>
         <input id="q" type="text" autocomplete="off" placeholder="escribe una frase" />
         <button type="submit">OK</button>
-        <audio id="voice" style="display:none" preload="none"></audio>
+        <audio id="voice" style="display:none" preload="none" playsinline></audio>
       </form>
     </main>
 
@@ -879,7 +879,33 @@
         toggleHistory(false);
       }
     });
-    const canRecord = Boolean(navigator.mediaDevices && window.MediaRecorder);
+    const canRecord = Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    let speakLang = "es-AR";
+    function langFromVoice(voice) {
+      const v = String(voice || "").toLowerCase();
+      if (v.startsWith("it") || v.includes("elsa") || v.includes("diego")) return "it-IT";
+      if (v.startsWith("en") || v.includes("jenny")) return "en-US";
+      return "es-AR";
+    }
+    function iphoneMicBlocked() {
+      const host = location.hostname;
+      const local = host === "localhost" || host === "127.0.0.1";
+      return !window.isSecureContext && !local;
+    }
+    document.addEventListener("pointerdown", () => {
+      try {
+        voiceEl.setAttribute("playsinline", "");
+        const prev = voiceEl.src;
+        voiceEl.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+        const played = voiceEl.play();
+        if (played && played.then) {
+          played.then(() => {
+            voiceEl.pause();
+            if (prev) voiceEl.src = prev;
+          }).catch(() => {});
+        }
+      } catch (e) {}
+    }, { once: true });
     let captionTimer = 0;
     const WAKE = /\b(ilaria|hilaria|ilaría|oy[eé]\s+ilaria|hey\s+ilaria|ok\s+ilaria)\b/i;
     let stream = null;
@@ -1077,14 +1103,17 @@
         if (audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
         return;
       }
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      });
+      const audioOpts = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioOpts });
+      } catch (e) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       audioCtx = new AudioContext();
       await audioCtx.resume();
       const src = audioCtx.createMediaStreamSource(stream);
@@ -1129,7 +1158,7 @@
       if (!window.speechSynthesis) { done(); return; }
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = "es-AR";
+      u.lang = speakLang;
       u.rate = 1.02;
       u.onend = done;
       u.onerror = done;
@@ -1502,7 +1531,11 @@
       try {
         await ensureMic();
       } catch (err) {
-        add("jarvis", "Micrófono bloqueado. Permitilo o abrí http://localhost:8787 en Edge/Chrome.");
+        if (iphoneMicBlocked()) {
+          add("jarvis", "En el iPhone el micrófono pide HTTPS. Instalá el perfil en /iphone y abrí https://" + location.hostname + ":8443");
+        } else {
+          add("jarvis", "Micrófono bloqueado. Permitilo en el navegador.");
+        }
         pushTalk = false;
         return;
       }
@@ -1621,6 +1654,7 @@
       if (!me.ok) { location.href = "/welcome"; return; }
       const data = await me.json();
       if (data.token) sessionToken = data.token;
+      speakLang = langFromVoice(data.user && data.user.tts_voice);
       const name = (data.user && data.user.display_name) || "";
       const assistant = (data.status && data.status.name) || "Ilaria";
       document.title = assistant;
@@ -1628,6 +1662,9 @@
       if (brandEl) brandEl.textContent = assistant.toUpperCase();
       const isOwner = !!(data.user && data.user.is_owner);
       const isPhone = /android|iphone|ipad|mobile/i.test(navigator.userAgent || "");
+      if (iphoneMicBlocked() && /iphone|ipad/i.test(navigator.userAgent || "")) {
+        add("jarvis", "Para hablar, instalá el perfil en /iphone y entrá por https://" + location.hostname + ":8443");
+      }
       // Ops console (left history + diagnostics): only local owner on desktop.
       const lean = !isOwner || isPhone;
       document.body.classList.toggle("hud-lean", lean);

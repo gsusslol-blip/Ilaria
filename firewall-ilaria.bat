@@ -13,6 +13,7 @@ if %errorlevel% neq 0 (
 )
 
 call :ensure "Ilaria HUD 8787 LAN" TCP 8787 "Ilaria FastAPI HUD + Android LAN"
+call :ensure "Ilaria HTTPS 8443 iPhone" TCP 8443 "Ilaria HTTPS so iPhone Safari can use the mic"
 call :ensure "Ilaria discover UDP 8788" UDP 8788 "Ilaria phone finds this PC on LAN"
 echo.
 echo Proba: celu en Wi-Fi, Ilaria abierta, app busca sola (UDP 8788 + TCP 8787).

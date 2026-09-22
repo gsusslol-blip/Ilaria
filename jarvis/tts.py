@@ -224,13 +224,14 @@ async def speak_to_file(settings: Settings, text: str, name: str | None = None) 
             return dest
 
     if use_edge:
-        path = await _edge_mp3(settings, clean, stamp)
+        try:
+            path = await _edge_mp3(settings, clean, stamp)
+        except Exception:
+            # No network: the bundled Piper voice still speaks.
+            use_edge = False
+            path = await _piper_wav(settings, clean, stamp)
     else:
-        from jarvis.piper_tts import synthesize_wav
-
-        path = DATA_DIR / (Path(stamp).stem + ".wav")
-        model_name = (getattr(settings, "piper_model_name", None) or "").strip() or None
-        await asyncio.to_thread(synthesize_wav, clean, path, model_name=model_name)
+        path = await _piper_wav(settings, clean, stamp)
 
     if len(clean) <= _CACHE_MAX_CHARS:
         try:
@@ -271,6 +272,15 @@ async def warm_phrase_cache(settings: Settings, limit: int = 24) -> int:
         except Exception:
             continue
     return done
+
+
+async def _piper_wav(settings: Settings, clean: str, stamp: str) -> Path:
+    from jarvis.piper_tts import synthesize_wav
+
+    path = DATA_DIR / (Path(stamp).stem + ".wav")
+    model_name = (getattr(settings, "piper_model_name", None) or "").strip() or None
+    await asyncio.to_thread(synthesize_wav, clean, path, model_name=model_name)
+    return path
 
 
 async def _edge_mp3(settings: Settings, clean: str, stamp: str) -> Path:

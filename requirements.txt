@@ -19,6 +19,8 @@ pvrecorder>=1.2.0
 faster-whisper>=1.1.0
 # Optional Spotify desktop search box (gated by SPOTIFY_UI_CONTROL=1):
 pyautogui>=0.9.54
+# LAN certificate so iPhone Safari can use the microphone (HTTPS :8443):
+cryptography>=43.0.0
 # Optional WAN tunnel for phone off LAN (needs NGROK_AUTHTOKEN):
 pyngrok>=7.2.0
 # SVG QR for HUD → phone deep link (ilaria://sync):

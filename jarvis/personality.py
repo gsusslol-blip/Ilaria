@@ -329,7 +329,7 @@ def split_system_prompt(
         rank = (
             "MEMBER with PC hands: open_app, browser, maps, screenshot, volume, mail OK. "
             "Call tools for PC actions. Never power_control / relaunch_service / mix_tracks. "
-            "Never open banking apps."
+            "Never write_file, code_assist, Cursor, or source edits. Never open banking apps."
         )
     else:
         rank = "MEMBER: no privileged PC tools; never power_control."
@@ -396,6 +396,15 @@ def split_system_prompt(
             f"for the phone.\n{(device_note or '')[:240]}\n"
         )
 
+    home_lang = ""
+    try:
+        from jarvis.voices import get_voice
+
+        lang = get_voice(getattr(settings, "voice_id", "") or "").lang
+        home_lang = "\n" + _home_language(lang) + "\n"
+    except Exception:
+        home_lang = ""
+
     if compact:
         extra = ""
         if (client_surface or "") in {"android", "ios"}:
@@ -414,7 +423,7 @@ def split_system_prompt(
             stamp="(see LIVE)",
             name=name,
             rag_block="",
-        ) + extra
+        ) + extra + home_lang
         live = (
             f"Current local datetime: {stamp}\n"
             f"SHORT-TERM BITÁCORA:\n{journal}\n"
@@ -445,6 +454,7 @@ Time-of-day posture detail:
 
 {actions.capabilities()}
 {phone_block}
+{home_lang}
 Known user facts:
 {facts}
 """
@@ -653,6 +663,38 @@ def messages_with_lock(
         payload[index] = {**item, "content": content + suffix}
         break
     return payload
+
+
+def _home_language(lang: str) -> str:
+    lines = {
+        "es": (
+            "HOME LANGUAGE: Spanish (Rioplatense). Always speak and write in Spanish. "
+            "Do not switch language unless they explicitly ask."
+        ),
+        "en": (
+            "HOME LANGUAGE: English. Always speak and write in English, "
+            "including study help, weather, and reminders. "
+            "Do not switch language unless they explicitly ask."
+        ),
+        "it": (
+            "HOME LANGUAGE: Italian. Always speak and write in Italian "
+            "(tu, caldo, chiaro), including study help, weather, and reminders. "
+            "Do not switch to Spanish unless they explicitly ask."
+        ),
+        "pt": (
+            "HOME LANGUAGE: Portuguese. Always speak and write in Portuguese. "
+            "Do not switch language unless they explicitly ask."
+        ),
+        "fr": (
+            "HOME LANGUAGE: French. Always speak and write in French. "
+            "Do not switch language unless they explicitly ask."
+        ),
+        "de": (
+            "HOME LANGUAGE: German. Always speak and write in German. "
+            "Do not switch language unless they explicitly ask."
+        ),
+    }
+    return lines.get(lang, lines["es"])
 
 
 def sticky_role_card(*, is_owner: bool, address_as: str, compact: bool = False) -> str:

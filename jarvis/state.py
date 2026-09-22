@@ -75,9 +75,10 @@ class AppState:
             if user.is_owner:
                 allowed = ALL_TOOL_NAMES
             elif self.accounts.members_pc_hands:
-                allowed = ALL_TOOL_NAMES - OWNER_ONLY_TOOLS
+                # Household members get daily PC hands, never code or owner power.
+                allowed = ALL_TOOL_NAMES - OWNER_ONLY_TOOLS - {"write_file", "code_assist"}
             else:
-                allowed = MEMBER_TOOLS
+                allowed = MEMBER_TOOLS - {"write_file", "code_assist"}
             brain = Brain(
                 settings=self.settings_for(user),
                 memory=memory,

@@ -121,14 +121,66 @@ async def run_backend(settings: Settings, state: AppState) -> None:
             await app.bot.send_message(chat_id=chat_id, text=text)
 
     pump = asyncio.create_task(reminder_loop(state, telegram_send))
+    https_task = asyncio.create_task(_serve_iphone_https(hud, settings))
     try:
         await server.serve()
     finally:
+        https_task.cancel()
         pump.cancel()
         if telegram is not None and telegram.updater is not None:
             await telegram.updater.stop()
             await telegram.stop()
             await telegram.shutdown()
+
+
+async def _serve_iphone_https(hud: object, settings: Settings) -> None:
+    """Second listener: trusted HTTPS so iPhone Safari can open the mic."""
+    if os.getenv("HUD_HTTPS", "1") == "0":
+        return
+    if settings.hud_host not in {"0.0.0.0", "::"}:
+        return
+    port = int(os.getenv("HUD_HTTPS_PORT", "8443"))
+    try:
+        from jarvis.certs import ensure_lan_certs
+
+        cert, key = ensure_lan_certs()
+        config = uvicorn.Config(
+            hud,
+            host=settings.hud_host,
+            port=port,
+            ssl_certfile=str(cert),
+            ssl_keyfile=str(key),
+            log_level="warning",
+        )
+        https = uvicorn.Server(config)
+        https.install_signal_handlers = False
+        await https.serve()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[HTTPS] iPhone no levantó el puerto {port} ({exc}).")
+
+
+def _announce_iphone(settings: Settings) -> None:
+    if os.getenv("HUD_HTTPS", "1") == "0":
+        return
+    if settings.hud_host not in {"0.0.0.0", "::"}:
+        return
+    try:
+        from jarvis.certs import ensure_lan_certs
+        from jarvis.lan import lan_ipv4
+
+        ensure_lan_certs()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[HTTPS] {exc}")
+        return
+    port = int(os.getenv("HUD_HTTPS_PORT", "8443"))
+    ips = lan_ipv4()
+    if not ips:
+        return
+    print("iPhone: perfil una vez, despues HTTPS (microfono).")
+    for ip in ips:
+        print(f"  Perfil:  http://{ip}:{settings.hud_port}/iphone")
+        print(f"  Hablar:  https://{ip}:{port}")
+    print("Firewall: firewall-ilaria.bat como Administrador (abre 8443).")
 
 
 _MIC_HOOKS: list[object] = []
@@ -226,9 +278,10 @@ def main() -> None:
             for base in phones:
                 print(f"  {base}/welcome")
             print("En Android: misma Wi-Fi (no 4G). La app busca la PC sola.")
-            print("Firewall una vez: firewall-ilaria.bat como Administrador (TCP 8787 + UDP 8788).")
+            print("Firewall una vez: firewall-ilaria.bat como Administrador (TCP 8787 + 8443, UDP 8788).")
         else:
             print("LAN activo (0.0.0.0) pero no detecté IP local. Revisá ipconfig.")
+        _announce_iphone(settings)
     else:
         print(f"Solo local ({settings.hud_host}). Para el celular: HUD_HOST=0.0.0.0 en .env")
 
