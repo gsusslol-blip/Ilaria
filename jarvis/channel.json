@@ -1,9 +1,10 @@
 {
-  "version": "1.5.9",
+  "version": "1.6.0",
   "min_required_android_client": "1.5.9",
   "changelog": [
-    "Search relevance guard + speakable answers (no junk/F1 cache)",
-    "GK Colón + unified PC/Android/iOS 1.5.9",
-    "LAN-first phone clients; Piper WAV smoke"
+    "Traducción hablada (translate_text)",
+    "Guías Windows, red LAN, compras, bitácora, música y opiniones",
+    "Reconocimiento de quién habla (huellas de voz)",
+    "PC/Android/iOS 1.6.0"
   ]
 }

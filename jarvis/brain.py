@@ -76,7 +76,7 @@ _SCHOOL_HINT = (
     r"integrales?|teorema|ensayo|monograf[ií]a|bibliograf[ií]a|ayuda\s+escolar|"
     r"homework|study|quiz|solve|ejercicio)\b"
 )
-# Subjective taste — answer locally; do NOT force web_search (triggers provider 403/noise).
+# Subjective taste / philosophy — answer locally; do NOT force web_search.
 _OPINION_HINT = (
     r"\b(m[aá]s\s+linda|m[aá]s\s+lindo|m[aá]s\s+hermosa|m[aá]s\s+hermoso|m[aá]s\s+guap[oa]|"
     r"m[aá]s\s+fea|m[aá]s\s+feo|qui[eé]n\s+es\s+m[aá]s|prefer[ií]s|te\s+gusta\s+m[aá]s|"
@@ -85,7 +85,12 @@ _OPINION_HINT = (
     r"m[aá]s\s+rico|m[aá]s\s+rica|favorit[oa]|tu\s+favorit|"
     r"qui[eé]n\s+es\s+mejor|qui[eé]n\s+mejor|mejor\s+entre|"
     r"\bo\b.{0,40}\bqui[eé]n\s+(?:es\s+)?mejor|"
-    r"messi\s+o\s+cr7|cr7\s+o\s+messi|chaewon\s+o\s+kazuha)\b"
+    r"messi\s+o\s+cr7|cr7\s+o\s+messi|chaewon\s+o\s+kazuha|"
+    r"sentido\s+de\s+la\s+vida|para\s+qu[eé]\s+vivimos|qu[eé]\s+es\s+la\s+felicidad|"
+    r"existe\s+dios|hay\s+dios|libre\s+albedr[ií]o|"
+    r"izquierda\s+o\s+derecha|a\s+qui[eé]n\s+voto|opin[ií]on\s+pol[ií]tica|"
+    r"cre[eé]s\s+en\s+(?:dios|el\s+destino|el\s+karma)"
+    r")\b"
 )
 
 
@@ -413,9 +418,10 @@ class Brain:
             pass
         # One shot web_search for question-like turns (never for subjective taste).
         if re.search(_OPINION_HINT, text, re.I):
-            return (
-                "Eso es gustos, no hay una respuesta objetiva. "
-                "Contame qué preferís vos y lo bancamos — yo no armo ranking de personas ni de gustos."
+            from jarvis.subjective import fixed_subjective_reply
+
+            return fixed_subjective_reply(text) or (
+                "Eso no tiene una verdad única. Contame tu ángulo y lo bajamos a algo concreto."
             )
         if _looks_like_question(text) or re.search(_SCHOOL_HINT, text, re.I) or re.search(
             _FACT_HINT, text, re.I
@@ -738,9 +744,9 @@ class Brain:
                 {
                     "role": "system",
                     "content": (
-                        "OPINION: subjective taste (beauty, favorites, who is prettier). "
-                        "Do NOT call web_search. Answer briefly, playfully, without ranking people "
-                        "as objective truth. No tools needed."
+                        "OPINION / PHILOSOPHY: subjective taste or open-ended meaning/politics. "
+                        "Do NOT call web_search. Answer briefly without claiming objective truth. "
+                        "No rankings of people. No partisan certainty. No tools needed."
                     ),
                 },
             )

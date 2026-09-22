@@ -100,8 +100,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "read_daily_journal",
-        "Read today's local journal. Use for 'en qué me quedé', 'qué anoté', 'bitácora de hoy', or before answering about recent PC work.",
-        {},
+        "Read local journal. which=today|yesterday|recent. "
+        "Use recent for 'en qué me quedé', 'qué anoté ayer', bitácora context.",
+        {
+            "which": {
+                "type": "string",
+                "description": "today | yesterday | recent (default today)",
+            },
+        },
     ),
     _fn(
         "set_volume",
@@ -431,6 +437,52 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {},
     ),
     _fn(
+        "translate_text",
+        "Translate a phrase to another language and return the translated text (spoken answer). "
+        "Use for 'traducí…', 'cómo se dice X en inglés', 'qué significa hello'. "
+        "Prefer this over opening Google Translate in the browser.",
+        {
+            "text": {"type": "string", "description": "Phrase to translate"},
+            "target": {
+                "type": "string",
+                "description": "Target language code or name (es, en, it, pt, fr, de…). Default es.",
+            },
+            "source": {
+                "type": "string",
+                "description": "Source language or 'auto'. Default auto.",
+            },
+        },
+        ["text"],
+    ),
+    _fn(
+        "windows_howto",
+        "Local Windows how-to: spoken steps and open Settings when useful "
+        "(uninstall, hosts, wifi, bluetooth, updates, startup, disk, sound, display, taskmgr). "
+        "Use for 'cómo desinstalo…', 'dónde está el hosts', 'cómo libero espacio'. "
+        "Do NOT web_search for these common PC tasks.",
+        {
+            "query": {"type": "string", "description": "User how-to phrase"},
+        },
+        ["query"],
+    ),
+    _fn(
+        "shop_compare",
+        "Live shopping comparison summary (notebook/celu/TV/etc.) with anti-SEO filtering. "
+        "Use for 'mejor notebook por X', 'cuál celular conviene'. Returns a short spoken summary.",
+        {
+            "query": {"type": "string", "description": "Product / budget question"},
+        },
+        ["query"],
+    ),
+    _fn(
+        "replay_last_music",
+        "Replay the last remembered track or yesterday's journal music. "
+        "Use for vague 'poné eso', 'lo de ayer', 'la última canción'.",
+        {
+            "hint": {"type": "string", "description": "Original vague phrase"},
+        },
+    ),
+    _fn(
         "relaunch_service",
         "One-step allowlisted remediación of ILARIA stack only. "
         "service: ollama | piper | ha_ping. No arbitrary shell. Owner-oriented.",
@@ -444,8 +496,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "check_lan_status",
-        "LAN IP(s), whether internet probe works, HUD URLs for the phone, "
-        "and whether UDP discover port 8788 is bound.",
+        "Deep home LAN check: local IP, internet, gateway reachability, DNS servers, "
+        "Wi‑Fi SSID/signal, HUD URLs for the phone, UDP discover 8788. "
+        "Returns a short spoken diagnosis (also structured fields).",
         {},
     ),
     _fn(
@@ -840,7 +893,7 @@ def make_executor(
         if name == "daily_journal":
             return actions.daily_journal(str(args.get("content", "")))
         if name == "read_daily_journal":
-            return actions.read_daily_journal()
+            return actions.read_daily_journal(str(args.get("which") or args.get("day") or "today"))
         if name == "set_volume":
             raw_level = args.get("level", args.get("value", args.get("percent", args.get("volumen"))))
             try:
@@ -1022,15 +1075,28 @@ def make_executor(
             return health_report_text(settings)
         if name == "diagnose_pc":
             return actions.diagnose_pc()
+        if name == "translate_text":
+            return actions.translate_text(
+                str(args.get("text") or args.get("query") or ""),
+                target=str(args.get("target") or args.get("to") or "es"),
+                source=str(args.get("source") or args.get("from") or "auto"),
+            )
+        if name == "windows_howto":
+            return actions.windows_howto(str(args.get("query") or args.get("text") or ""))
+        if name == "shop_compare":
+            from jarvis.shop_compare import run_shop_compare
+
+            q = str(args.get("query") or args.get("text") or "")
+            return run_shop_compare(q, execute)
+        if name == "replay_last_music":
+            return actions.replay_last_music(str(args.get("hint") or args.get("query") or ""))
         if name == "relaunch_service":
             from jarvis.self_healing import relaunch_service
 
             result = relaunch_service(settings, str(args.get("service", "")))
             return json.dumps(result, ensure_ascii=False)
         if name == "check_lan_status":
-            from jarvis.self_healing import check_lan_status
-
-            return json.dumps(check_lan_status(settings), ensure_ascii=False)
+            return actions.check_lan_speakable()
         return f"Unknown tool: {name}"
 
     return execute
@@ -1050,6 +1116,8 @@ PC_TOOLS = {
     "media",
     "play_music",
     "app_search_action",
+    "replay_last_music",
+    "windows_howto",
     "set_volume",
     "undo_last",
     "send_email",

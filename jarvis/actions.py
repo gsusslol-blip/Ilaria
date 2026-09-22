@@ -186,8 +186,11 @@ class Actions:
             f"- Home Assistant lights/plugs: {ha}\n"
             "Will not: bank logins, card payments, silent WhatsApp/SMS send, "
             "reading the SMS inbox, root, or hardware you do not own.\n"
-            "Stack diagnose: get_system_health / check_lan_status; "
+            "Stack diagnose: get_system_health / check_lan_status (gateway/DNS/Wi‑Fi); "
             "PC lenta / bottlenecks / qué mejorar: diagnose_pc (local CPU/RAM/disk); "
+            "Windows how-to: windows_howto (local steps + Settings); "
+            "translate phrases: translate_text (spoken result, not just a browser tab); "
+            "shop compare: shop_compare (live summary, anti-SEO); "
             "owner remediación allowlisted: relaunch_service (ollama|piper|ha_ping).\n"
             "On the Ilaria Android/iOS app: phone_hands (dialer, SMS draft, WhatsApp draft, maps, "
             "apps, torch, camera, gallery, volume, alarm/timer, settings, share)."
@@ -237,6 +240,25 @@ class Actions:
             query=query,
         )
 
+    def replay_last_music(self, hint: str = "") -> str:
+        """Resolve vague 'poné eso / lo de ayer' against last track + journal."""
+        from jarvis.last_music import resolve_replay_music
+
+        hit = resolve_replay_music(
+            hint or "poné eso",
+            self.workspace,
+            timezone=self.settings.timezone,
+        )
+        if not hit:
+            return "No tengo una canción reciente guardada. Decime el tema y la abro."
+        q = str(hit.get("query") or "").strip()
+        plat = str(hit.get("platform") or "youtube").strip() or "youtube"
+        note = ""
+        if hit.get("fallback") == "not_yesterday":
+            note = "No encontré música de ayer en la bitácora; repito la última que guardé. "
+        result = self.play_music(q, platform=plat)
+        return f"{note}{result}"
+
     def app_search_action(
         self,
         browser: str = "brave",
@@ -249,6 +271,20 @@ class Actions:
             return "Decime qué buscar o qué canción querés."
         plat = (platform or "youtube").strip().lower()
         brow = (browser or "brave").strip().lower() or "brave"
+
+        # Remember music plays for vague replay later.
+        if any(x in plat for x in ("youtube", "yt", "spotify", "music", "musica")):
+            try:
+                from jarvis.last_music import save_last_music
+
+                save_last_music(
+                    self.workspace,
+                    q,
+                    platform=plat,
+                    timezone=self.settings.timezone,
+                )
+            except Exception:
+                pass
 
         if "spotify" in plat:
             opened = _open_spotify_app()
@@ -683,6 +719,23 @@ class Actions:
 
         return speakable_pc_diagnosis()
 
+    def translate_text(self, text: str, target: str = "es", source: str = "auto") -> str:
+        from jarvis.translate import speakable_translation, translate_text
+
+        result = translate_text(text, target=target or "es", source=source or "auto")
+        return speakable_translation(result, original=text)
+
+    def windows_howto(self, query: str = "") -> str:
+        from jarvis.windows_howto import run_windows_howto
+
+        out = run_windows_howto(query or "", open_app_fn=self.open_app)
+        return out or "Decime qué querés hacer en Windows (desinstalar, wifi, hosts, disco…)."
+
+    def check_lan_speakable(self) -> str:
+        from jarvis.self_healing import check_lan_status, speakable_lan_status
+
+        return speakable_lan_status(self.settings, check_lan_status(self.settings))
+
     def daily_journal(self, content: str) -> str:
         text = content.strip()
         if not text:
@@ -695,12 +748,43 @@ class Actions:
             handle.write(f"[{stamp}] {text}\n")
         return f"Asentado en {path.name}."
 
-    def read_daily_journal(self) -> str:
-        day = datetime.now(ZoneInfo(self.settings.timezone)).strftime("%Y-%m-%d")
+    def read_daily_journal(self, which: str = "today") -> str:
+        """Read journal. which: today | yesterday | recent (speakable context)."""
+        from datetime import timedelta
+
+        kind = (which or "today").strip().lower()
+        now = datetime.now(ZoneInfo(self.settings.timezone))
+        if kind in {"recent", "context", "resume", "quedé", "quede", "ayer_hoy"}:
+            return self.speakable_journal_resume()
+        if kind in {"yesterday", "ayer"}:
+            day = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            label = "Ayer"
+        else:
+            day = now.strftime("%Y-%m-%d")
+            label = "Hoy"
         path = self.workspace / f"diario_{day}.txt"
         if not path.exists():
-            return "Hoy todavia no hay minuta."
-        return path.read_text(encoding="utf-8").strip() or "Hoy todavia no hay minuta."
+            return f"{label} todavía no hay minuta."
+        body = path.read_text(encoding="utf-8").strip()
+        return body or f"{label} todavía no hay minuta."
+
+    def speakable_journal_resume(self) -> str:
+        """Short spoken answer for 'en qué me quedé' / yesterday context."""
+        ctx = self.journal_context(today_lines=6, yesterday_lines=8)
+        if "Sin entradas" in ctx:
+            return "No hay bitácora reciente. Si querés, anotamos algo ahora."
+        # Flatten for TTS: drop markdown headers, keep last lines.
+        lines = [
+            ln.strip()
+            for ln in ctx.splitlines()
+            if ln.strip() and not ln.strip().startswith("---")
+        ]
+        if not lines:
+            return "No hay bitácora reciente."
+        # Prefer last 4 entries.
+        tail = lines[-4:]
+        spoken = " · ".join(re.sub(r"^\[\d{1,2}:\d{2}\]\s*", "", ln) for ln in tail)
+        return f"Te quedaste en: {spoken}"
 
     def journal_context(self, today_lines: int = 24, yesterday_lines: int = 8) -> str:
         """Last journal lines for system-prompt short-term memory."""

@@ -161,6 +161,29 @@
         </div>
       </div>
 
+      <h2>Quién habla (huellas de voz)</h2>
+      <p class="hint">
+        Enrolá 2–4 segundos de tu voz (y la de cada persona de la casa).
+        Después Ilaria puede decir quién le está hablando en el mic / wake.
+      </p>
+      <div class="row">
+        <div>
+          <label for="speaker_label">Etiqueta (usuario)</label>
+          <input id="speaker_label" placeholder="gsuss" autocomplete="off" />
+        </div>
+        <div>
+          <label for="speaker_display">Nombre hablado</label>
+          <input id="speaker_display" placeholder="cómo te llama" autocomplete="off" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="ghost" type="button" id="enrollSpeaker">Grabar y enrolar (~3 s)</button>
+        <button class="ghost" type="button" id="refreshSpeakers">Actualizar lista</button>
+      </div>
+      <ul id="speakerList" style="margin:10px 0 0;padding-left:18px;color:var(--muted,#aaa);font-size:13px"></ul>
+      <div class="err" id="speakerErr"></div>
+      <div class="ok" id="speakerOk"></div>
+
       <label>Packs de trabajo habilitados</label>
       <div class="chips" id="packs"></div>
 
@@ -289,6 +312,124 @@
       }
       document.getElementById("ok").textContent = "Audio PC guardado. Reiniciá el HUD si cambiaste wake.";
     };
+
+    async function refreshSpeakers() {
+      const list = document.getElementById("speakerList");
+      list.innerHTML = "";
+      const res = await fetch("/api/speaker", { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        list.innerHTML = "<li>No pude cargar huellas.</li>";
+        return;
+      }
+      const rows = data.speakers || [];
+      if (!rows.length) {
+        list.innerHTML = "<li>Nadie enrolado todavía.</li>";
+        return;
+      }
+      rows.forEach((s) => {
+        const li = document.createElement("li");
+        li.textContent = `${s.display_name} (${s.label}) · ${s.samples} muestra(s)`;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.style.marginLeft = "8px";
+        btn.textContent = "Borrar";
+        btn.onclick = async () => {
+          const del = await fetch("/api/speaker/" + encodeURIComponent(s.label), {
+            method: "DELETE",
+            credentials: "same-origin",
+          });
+          if (del.ok) refreshSpeakers();
+        };
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+    }
+
+    async function recordWavBlob(seconds) {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const proc = ctx.createScriptProcessor(4096, 1, 1);
+      const chunks = [];
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      src.connect(proc);
+      proc.connect(mute);
+      mute.connect(ctx.destination);
+      proc.onaudioprocess = (ev) => {
+        chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+      };
+      await new Promise((r) => setTimeout(r, Math.max(1500, seconds * 1000)));
+      try { proc.disconnect(); src.disconnect(); } catch (e) {}
+      stream.getTracks().forEach((t) => t.stop());
+      const sr = ctx.sampleRate;
+      try { await ctx.close(); } catch (e) {}
+      let len = 0;
+      chunks.forEach((c) => (len += c.length));
+      const merged = new Float32Array(len);
+      let off = 0;
+      chunks.forEach((c) => { merged.set(c, off); off += c.length; });
+      // Downsample to 16 kHz mono WAV
+      const target = 16000;
+      const ratio = sr / target;
+      const n = Math.floor(merged.length / ratio);
+      const pcm = new Int16Array(n);
+      for (let i = 0; i < n; i++) {
+        const s = Math.max(-1, Math.min(1, merged[Math.floor(i * ratio)] || 0));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+      const buffer = new ArrayBuffer(44 + pcm.length * 2);
+      const view = new DataView(buffer);
+      const writeStr = (o, str) => { for (let i = 0; i < str.length; i++) view.setUint8(o + i, str.charCodeAt(i)); };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + pcm.length * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, target, true);
+      view.setUint32(28, target * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, pcm.length * 2, true);
+      let o = 44;
+      for (let i = 0; i < pcm.length; i++, o += 2) view.setInt16(o, pcm[i], true);
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    document.getElementById("refreshSpeakers").onclick = () => refreshSpeakers();
+    document.getElementById("enrollSpeaker").onclick = async () => {
+      const err = document.getElementById("speakerErr");
+      const ok = document.getElementById("speakerOk");
+      err.textContent = "";
+      ok.textContent = "Grabando 3 segundos… hablá con naturalidad.";
+      try {
+        const blob = await recordWavBlob(3.2);
+        const fd = new FormData();
+        fd.append("file", blob, "enroll.wav");
+        fd.append("label", document.getElementById("speaker_label").value || "");
+        fd.append("display_name", document.getElementById("speaker_display").value || "");
+        const res = await fetch("/api/speaker/enroll", { method: "POST", body: fd, credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          ok.textContent = "";
+          err.textContent = (typeof data.detail === "string" ? data.detail : null) || "No pude enrolar.";
+          return;
+        }
+        ok.textContent = `Huella lista: ${data.display_name} (${data.samples} muestra/s).`;
+        refreshSpeakers();
+      } catch (e) {
+        ok.textContent = "";
+        err.textContent = "Micrófono bloqueado o falló la grabación.";
+      }
+    };
+    refreshSpeakers();
 
     document.getElementById("previewVoice").onclick = async () => {
       document.getElementById("err").textContent = "";

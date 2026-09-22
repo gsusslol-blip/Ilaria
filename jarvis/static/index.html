@@ -765,6 +765,7 @@
         <div class="metric-row"><span>Ollama LLM</span><strong class="text-green" id="metric-ollama">—</strong></div>
         <div class="metric-row"><span>Puerto HUD</span><strong id="metric-port">—</strong></div>
         <div class="metric-row"><span>Voz</span><strong id="metric-tts">—</strong></div>
+        <div class="metric-row"><span>Quién habla</span><strong id="metric-speaker">—</strong></div>
         <div class="metric-row"><span>Caché TTS</span><strong id="metric-piper-cache">—</strong></div>
         <div class="metric-row"><span>LAN UDP</span><strong id="metric-lan">—</strong></div>
         <div class="metric-row"><span>Red</span><strong id="metric-net-mode">—</strong></div>
@@ -1288,7 +1289,7 @@
     }
 
     async function transcribe(blob, { quiet = false } = {}) {
-      if (!blob || blob.size < 800) return "";
+      if (!blob || blob.size < 800) return { text: "", speaker: null };
       const fd = new FormData();
       const name = (blob.type || "").includes("wav") ? "audio.wav" : (mime.includes("mp4") ? "audio.mp4" : "audio.webm");
       fd.append("file", blob, name);
@@ -1301,15 +1302,22 @@
             const msg = typeof data.detail === "string" ? data.detail : "No pude transcribir.";
             add("jarvis", msg);
           }
-          return "";
+          return { text: "", speaker: null };
         }
-        return (data.text || "").trim();
+        const speaker = data.speaker || null;
+        const spEl = document.getElementById("metric-speaker");
+        if (spEl) {
+          spEl.textContent = speaker
+            ? `${speaker.display_name} (${Math.round((speaker.score || 0) * 100)}%)`
+            : "—";
+        }
+        return { text: (data.text || "").trim(), speaker };
       } catch (err) {
         if (!quiet || Date.now() - lastSttErr > 12000) {
           lastSttErr = Date.now();
           add("jarvis", "No pude transcribir: falló la red local.");
         }
-        return "";
+        return { text: "", speaker: null };
       }
     }
 
@@ -1506,9 +1514,9 @@
       }
       setLive("procesando voz…", true);
       setOrb("thinking");
-      const text = await transcribe(rec.blob);
+      const stt = await transcribe(rec.blob);
       pushTalk = false;
-      if (text) await send(text);
+      if (stt.text) await send(stt.text);
       else setLive(handsFree ? "escuchando — decí Ilaria" : "En línea", handsFree);
     }
 
@@ -1565,8 +1573,8 @@
         }
         setLive("procesando voz…", true);
         setOrb("thinking");
-        const text = await transcribe(rec.blob, { quiet: true });
-        const gated = fromHandsFree(text);
+        const stt = await transcribe(rec.blob, { quiet: true });
+        const gated = fromHandsFree(stt.text || "");
         if (handsFree && gated) await send(gated);
         else if (handsFree) {
           setLive("escuchando — decí Ilaria", true);
