@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
+import re
+import struct
 import threading
 import time
+import wave
 from pathlib import Path
 
 from jarvis.config import DATA_DIR, ROOT
@@ -30,20 +34,47 @@ def wake_enabled() -> bool:
     return bool(_access_key())
 
 
+_WAKE_WORD = re.compile(
+    r"\b(?:hey\s+|ok\s+|oye\s+)?(ilaria|hilaria|ilaría)\b",
+    re.IGNORECASE,
+)
+
+
+def command_after_wake(text: str) -> str | None:
+    """Text after «Ilaria», empty string if only the name, None if she was not called."""
+    match = _WAKE_WORD.search(text or "")
+    if match is None:
+        return None
+    return (text[match.end() :] or "").strip(" ,.!?…;:")
+
+
 def start_wake_listener(state: AppState) -> None:
-    """Spawn a daemon thread; no-op if disabled, missing key, or deps unavailable."""
+    """Spawn a daemon thread. Local mic first; Picovoice only when a key exists."""
     global _STARTED
     if _STARTED:
         return
-    if not wake_enabled():
-        print(f"[-] Wake PC off (falta PICOVOICE_ACCESS_KEY / PICOVOICE_API_KEY). {_HUD_LIBRE_HINT}")
+    if _access_key():
+        _start_picovoice(state)
         return
+    if os.getenv("WAKE_LOCAL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    _STARTED = True
+    thread = threading.Thread(
+        target=_local_listen,
+        args=(state,),
+        name="ilaria-wake-local",
+        daemon=True,
+    )
+    thread.start()
+    print("[+] Wake local: escuchando «Ilaria» en esta PC.")
+
+
+def _start_picovoice(state: AppState) -> None:
+    global _STARTED
     try:
         import pvporcupine  # noqa: F401
         from pvrecorder import PvRecorder  # noqa: F401
-    except ImportError as exc:
-        print(f"[-] Wake word skipped (pip install pvporcupine pvrecorder): {exc}")
-        print(f"    {_HUD_LIBRE_HINT}")
+    except ImportError:
         return
     _STARTED = True
     thread = threading.Thread(
@@ -212,12 +243,122 @@ def _listen_loop(state: AppState) -> None:
             pass
 
 
+def _pcm_wav(samples: list[int], rate: int = 16000) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+    return buf.getvalue()
+
+
+def _local_listen(state: AppState) -> None:
+    """Energy gate + the Whisper already on disk. No Picovoice, no new download."""
+    try:
+        import sounddevice as sd
+    except ImportError:
+        print("[+] Wake: usá el botón Libre del HUD.")
+        return
+    from jarvis.vad import _rms
+
+    rate = 16000
+    frame = 1600
+    silence_need = 7
+    speech: list[int] = []
+    quiet = 0
+    try:
+        stream = sd.RawInputStream(
+            samplerate=rate,
+            channels=1,
+            dtype="int16",
+            blocksize=frame,
+        )
+        stream.start()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[+] Wake local no abrió el micrófono ({exc}). Botón Libre del HUD.")
+        return
+    try:
+        while True:
+            if hud_listening():
+                speech.clear()
+                quiet = 0
+                time.sleep(0.2)
+                continue
+            block, _overflow = stream.read(frame)
+            samples = list(struct.unpack(f"<{len(block) // 2}h", bytes(block)))
+            if _rms(samples) >= 450:
+                speech.extend(samples)
+                quiet = 0
+                if len(speech) > rate * 4:
+                    _flush_local(state, stream, speech, rate)
+                    speech = []
+                    quiet = 0
+                continue
+            if not speech:
+                continue
+            quiet += 1
+            speech.extend(samples)
+            if quiet >= silence_need and len(speech) >= int(rate * 0.45):
+                _flush_local(state, stream, speech, rate)
+                speech = []
+                quiet = 0
+    except Exception as exc:  # noqa: BLE001
+        print(f"[-] Wake local: {exc}")
+    finally:
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            pass
+
+
+def _flush_local(state: AppState, stream: object, speech: list[int], rate: int) -> None:
+    wav = _pcm_wav(speech, rate)
+    if not contains_speech(wav, "wake.wav"):
+        return
+    if not _WAKE_LOCK.acquire(blocking=False):
+        return
+    start = None
+    try:
+        stop = getattr(stream, "stop", None)
+        start = getattr(stream, "start", None)
+        if stop is not None:
+            stop()
+        try:
+            owner = state.accounts.owner()
+            if owner is None:
+                return
+            settings = state.brain_for(owner).settings
+            heard = transcribe_audio(settings, wav, "wake.wav")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[-] Wake local STT: {exc}")
+            return
+        rest = command_after_wake(heard)
+        if rest is None:
+            return
+        print(f"[!] Wake local: {heard}")
+        if rest:
+            _handle_wake(state, rate, 512, preset_text=rest, preset_wav=wav)
+        else:
+            _handle_wake(state, rate, 512)
+    finally:
+        if start is not None:
+            try:
+                start()
+            except Exception:
+                pass
+        _WAKE_LOCK.release()
+
+
 def _handle_wake(
     state: AppState,
     sample_rate: int,
     frame_length: int,
     *,
     recorder: object | None = None,
+    preset_text: str | None = None,
+    preset_wav: bytes | None = None,
 ) -> None:
     owner = state.accounts.owner()
     if owner is None:
@@ -231,16 +372,19 @@ def _handle_wake(
         print("[-] Wake: falta Faster-Whisper local o GROQ/OPENAI para STT.")
         return
     brain.bus.push("Te escucho…", audio_url=None)
-    try:
-        wav = record_command_wav(
-            sample_rate=sample_rate,
-            frame_length=frame_length,
-            max_seconds=seconds,
-            recorder=recorder,
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[-] Wake STT record error: {exc}")
-        wav = b""
+    if preset_wav is not None:
+        wav = preset_wav
+    else:
+        try:
+            wav = record_command_wav(
+                sample_rate=sample_rate,
+                frame_length=frame_length,
+                max_seconds=seconds,
+                recorder=recorder,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[-] Wake STT record error: {exc}")
+            wav = b""
     if len(wav) < 800 or not contains_speech(wav):
         print("[-] Wake: VAD descartó el clip (sin voz) antes de Whisper.")
         reply = "No te escuché bien. Decilo otra vez después de llamarme."
@@ -268,7 +412,10 @@ def _handle_wake(
         print(f"[-] Wake speaker-id: {exc}")
 
     try:
-        text = transcribe_audio(settings, wav, "wake.wav")
+        if preset_text is not None:
+            text = preset_text
+        else:
+            text = transcribe_audio(settings, wav, "wake.wav")
     except Exception as exc:  # noqa: BLE001
         print(f"[-] Wake STT error: {exc}")
         text = ""

@@ -35,6 +35,16 @@ class AppreciationAndLiveFxTests(unittest.TestCase):
         self.assertEqual(out, _APPRECIATION_REPLY)
         self.assertEqual(captured, [])
 
+    def test_bare_hello_does_not_wait_for_the_model(self) -> None:
+        def execute(name: str, arguments_json: str) -> str:
+            raise AssertionError(name)
+
+        out = try_local_command("hola", execute, Memory(), load_settings())
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertTrue(out.startswith("Hola"))
+        self.assertIn("Acá estoy", out)
+
     def test_favorite_also_appreciation(self) -> None:
         def execute(name: str, arguments_json: str) -> str:
             return "OK"

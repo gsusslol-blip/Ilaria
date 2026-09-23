@@ -119,6 +119,7 @@ class Brain:
         self.allowed_tools = allowed_tools
         self.actions = Actions(settings, self.bus, workspace, is_owner=is_owner)
         self._endpoint: LLMEndpoint | None = None
+        self._cloud_hold_until: float = 0.0
         self._history: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._chat_path = (self.memory.path.parent / "chat_history.json") if hasattr(self.memory, "path") else None
         self._load_persisted_history()
@@ -335,6 +336,16 @@ class Brain:
 
     @property
     def endpoint(self) -> LLMEndpoint:
+        hold = self._cloud_hold_until
+        if (
+            hold
+            and time.time() >= hold
+            and self._endpoint is not None
+            and self._endpoint.label in {"ollama", "llamacpp"}
+        ):
+            # The cloud blip is over. Next turn tries the fast brain again.
+            self._endpoint = None
+            self._cloud_hold_until = 0.0
         if self._endpoint is None:
             self._endpoint = resolve_llm(self.settings)
         return self._endpoint
@@ -959,6 +970,7 @@ class Brain:
                 messages.append(assistant_msg)
                 history.append(assistant_msg)
 
+                spoken_now: list[str] = []
                 for call, result in _execute_tools_parallel(self.execute, tool_calls):
                     executed_actions.append((call.function.name, result))
                     content = result[:12000]
@@ -966,6 +978,8 @@ class Brain:
                         from jarvis.search_speak import clean_search_results, speakable_from_search
 
                         spoken = speakable_from_search(result, text, max_words=42)
+                        if spoken:
+                            spoken_now.append(spoken)
                         cleaned = clean_search_results(result, max_chars=900)
                         if spoken:
                             content = (
@@ -981,6 +995,13 @@ class Brain:
                     }
                     messages.append(tool_msg)
                     history.append(tool_msg)
+
+                # A clean fact snippet is the answer. Skip the second model pass.
+                if factish and spoken_now and not manageish and not schoolish:
+                    answer = self._finish(" ".join(spoken_now))
+                    yield answer
+                    self._store(session_id, answer)
+                    return
 
                 # Stop forcing more tools after the first successful round.
                 choice_mode = "auto"
@@ -1093,6 +1114,7 @@ class Brain:
                         )
                         raw = (response.choices[0].message.content or "").strip()
                         if raw:
+                            self._cloud_hold_until = time.time() + 90.0
                             answer = self._finish(raw)
                             self._store(session_id, answer)
                             yield answer

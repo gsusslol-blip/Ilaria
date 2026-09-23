@@ -54,11 +54,46 @@ $piper = Join-Path $Root "bin\piper"
 if (Test-Path (Join-Path $piper "piper.exe")) {
     Write-Host "[+] voz Piper"
     Copy-Item $piper (Join-Path $Out "bin\piper") -Recurse
+    $espeak = Join-Path $Out "bin\piper\espeak-ng-data"
+    if (Test-Path $espeak) {
+        Get-ChildItem $espeak -Filter "*_dict" -File | Where-Object {
+            $_.Name -notmatch '^(es|en|it)'
+        } | Remove-Item -Force
+    }
+}
+# Server runtime only. Bench, quantize and the CLI are not how Ilaria talks.
+$llama = Join-Path $Root "bin\llama"
+if (Test-Path (Join-Path $llama "llama-server.exe")) {
+    $llamaDest = Join-Path $Out "bin\llama"
+    New-Item -ItemType Directory -Force -Path $llamaDest | Out-Null
+    Get-ChildItem $llama -File | Where-Object {
+        $_.Name -match '^(llama-server|llama\.dll|llama-common|mtmd|ggml|libomp)'
+    } | ForEach-Object { Copy-Item $_.FullName (Join-Path $llamaDest $_.Name) -Force }
+}
+# Same 1.5B Q4 the installer already ships. A smaller quant answers worse offline.
+$brainName = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+$brainSrc = Join-Path $Root "models\$brainName"
+if (Test-Path $brainSrc) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Out "models") | Out-Null
+    Copy-Item $brainSrc (Join-Path $Out "models\$brainName") -Force
 }
 $tts = Join-Path $Root "data\tts"
+$voices = @(
+    "es_AR-daniela-high.onnx",
+    "es_MX-ald-medium.onnx",
+    "it_IT-paola-medium.onnx",
+    "it_IT-riccardo-x_low.onnx",
+    "en_US-lessac-medium.onnx"
+)
 if (Test-Path $tts) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $Out "data\tts") | Out-Null
-    Copy-Item (Join-Path $tts "*") (Join-Path $Out "data\tts") -Force
+    $dest = Join-Path $Out "data\tts"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    foreach ($name in $voices) {
+        foreach ($suffix in @("", ".json")) {
+            $src = Join-Path $tts ($name + $suffix)
+            if (Test-Path $src) { Copy-Item $src (Join-Path $dest ($name + $suffix)) -Force }
+        }
+    }
 }
 
 @'

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
 from openai import OpenAI
 
 from jarvis.config import Settings, _ollama_reachable
+
+# Fail the socket quickly so a dead cloud falls through to the local model.
+_CLOUD_TIMEOUT = httpx.Timeout(45.0, connect=4.0)
 
 GROQ_MODELS = (
     "openai/gpt-oss-20b",
@@ -158,6 +162,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             client=OpenAI(
                 api_key=settings.groq_api_key,
                 base_url="https://api.groq.com/openai/v1",
+                timeout=_CLOUD_TIMEOUT,
+                max_retries=0,
             ),
             model=model or groq_model_candidates(settings)[0],
         )
@@ -168,7 +174,7 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             raise RuntimeError("OPENAI_API_KEY is empty.")
         return LLMEndpoint(
             label="openai",
-            client=OpenAI(api_key=settings.openai_api_key),
+            client=OpenAI(api_key=settings.openai_api_key, timeout=_CLOUD_TIMEOUT, max_retries=0),
             model=model or settings.llm_model or "gpt-4o-mini",
         )
     if provider == "gemini":
@@ -181,6 +187,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             client=OpenAI(
                 api_key=settings.gemini_api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                timeout=_CLOUD_TIMEOUT,
+                max_retries=0,
             ),
             model=model or settings.llm_model or "gemini-2.0-flash",
         )

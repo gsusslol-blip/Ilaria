@@ -31,6 +31,9 @@ def try_local_command(
         flags=re.I,
     ).strip()
     raw = re.sub(r"^(?:hey\s+)?ilaria\b[\s,.:\-]*", "", raw, flags=re.I).strip()
+    if not raw:
+        who = (settings.user_name or "").strip()
+        return f"Hola{', ' + who if who else ''}. Acá estoy."
     lower = raw.lower()
     city = _city(raw, memory)
     phone = (surface or "hud").strip().lower() in {"android", "ios", "iphone", "ipad"}

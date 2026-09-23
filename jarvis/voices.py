@@ -182,12 +182,11 @@ def voice_for_lang(lang: str | None) -> str:
 
 
 def resolve_runtime(voice_id: str | None) -> dict[str, str]:
-    """Map catalog id → provider + Edge name + Piper file for offline fallback."""
+    """Map catalog id → local Piper when that file is on disk, else Edge."""
     voice = get_voice(voice_id)
     piper_ready = bool(voice.piper_file) and _piper_file_exists(voice.piper_file)
-    # Edge voices keep the neural voice online. The Piper file is what speaks
-    # when Edge has no network, in the same language (not the Spanish default).
-    if voice.provider == "piper" and piper_ready:
+    # A voice that already has a Piper file never needs the network.
+    if piper_ready:
         provider = "piper"
     elif voice.edge_voice:
         provider = "edge"

@@ -236,12 +236,6 @@ def _open_tunnel(ngrok_mod: object, hud_port: int, token: str) -> object:
             raise
         api_key = os.getenv("NGROK_API_KEY", "").strip()
         if session_limit and not api_key:
-            print(
-                "[TUNNEL] El plan gratis ya tiene 3 agentes abiertos. "
-                "Cerrá los viejos en https://dashboard.ngrok.com/agents y volvé a abrir Ilaria. "
-                "En la misma Wi-Fi no hace falta el puente.",
-                flush=True,
-            )
             raise
         print("[TUNNEL] El enlace anterior sigue tomado. Lo suelto y reintento.", flush=True)
         if api_key:
@@ -268,14 +262,12 @@ def inicializar_tunel_remoto(
     cfg = settings or load_settings()
     token = os.getenv("NGROK_AUTHTOKEN", "").strip()
     if not token:
-        print("[TUNNEL] Sin NGROK_AUTHTOKEN. Sincronización limitada a LAN (UDP 8788).")
         return None
 
     hud_port = int(port if port is not None else cfg.hud_port)
     try:
         from pyngrok import ngrok
     except ImportError:
-        print("[TUNNEL] Falta pyngrok. Instalá: pip install pyngrok")
         return None
 
     with _lock:
@@ -307,14 +299,41 @@ def inicializar_tunel_remoto(
         print(f"[TUNNEL] Guardado en {sync_path(cfg)}")
         return public_url
     except Exception as exc:  # noqa: BLE001
-        print(f"[TUNNEL] Error al inicializar puente seguro: {exc}")
+        text = str(exc)
+        if "108" in text or "simultaneous" in text.lower():
+            _mark_wan_paused()
+            print("[TUNNEL] Sigo en la Wi-Fi de casa.", flush=True)
+        else:
+            print(f"[TUNNEL] Error al inicializar puente seguro: {exc}")
         with _lock:
             _started = False
         return None
 
 
+def wan_pause_file() -> Path:
+    from jarvis.config import DATA_DIR
+
+    return DATA_DIR / "wan_paused"
+
+
+def wan_paused() -> bool:
+    forced = os.getenv("ILARIA_WAN", "").strip().lower()
+    if forced in {"1", "true", "yes", "on"}:
+        return False
+    return wan_pause_file().is_file()
+
+
+def _mark_wan_paused() -> None:
+    path = wan_pause_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.is_file():
+        path.write_text("paused\n", encoding="utf-8")
+
+
 def start_tunnel_background(settings: Settings) -> None:
     """Non-blocking warm of the WAN tunnel after HUD bind."""
+    if wan_paused():
+        return
 
     def _run() -> None:
         inicializar_tunel_remoto(settings)
