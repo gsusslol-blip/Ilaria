@@ -21,6 +21,10 @@ from jarvis.memory import Memory
 # Fastest usable backend here is Bing (~300ms, high quality when healthy).
 # Bing can occasionally return junk — relevance gate falls through to Yahoo / DDG.
 _SEARCH_CHAIN = ("bing", "yahoo", "duckduckgo")
+_JUNK_HIT = re.compile(
+    r"banca\s+online|iniciar\s+sesi[oó]n|/login|acced[eé]\s+a\s+tu\s+cuenta|sign\s+in",
+    re.I,
+)
 _SEARCH_TIMEOUT_S = 4.0
 _SEARCH_REGION = "ar-es"
 
@@ -584,6 +588,38 @@ class _VisibleText(HTMLParser):
             self.parts.append(text)
 
 
+def _patch_ddgs_impersonate() -> None:
+    """Force primp impersonate='random' on every DDGS engine client.
+
+    ddgs samples stale browser ids (chrome_106, firefox_109). primp 2.x
+    raises Invalid impersonate and the search returns nothing.
+    """
+    try:
+        import primp
+        from ddgs.http_client import HttpClient
+    except Exception:  # noqa: BLE001
+        return
+    if getattr(HttpClient, "_ilaria_impersonate", False):
+        return
+
+    def _init(self: Any, proxy: str | None = None, timeout: int | None = 10, verify: bool = True) -> None:
+        self.client = primp.Client(
+            proxy=proxy,
+            timeout=timeout if timeout is not None else 10,
+            impersonate="random",
+            impersonate_os="windows",
+            verify=verify,
+        )
+
+    HttpClient.__init__ = _init  # type: ignore[method-assign]
+    HttpClient._ilaria_impersonate = True  # type: ignore[attr-defined]
+
+
+def _ddgs(timeout_s: float) -> DDGS:
+    _patch_ddgs_impersonate()
+    return DDGS(timeout=int(timeout_s))
+
+
 def _image_search(
     query: str,
     max_results: int = 5,
@@ -601,7 +637,7 @@ def _image_search(
     for backend in ("bing", "duckduckgo", "yahoo"):
         try:
             found = list(
-                DDGS(timeout=int(_SEARCH_TIMEOUT_S)).images(
+                _ddgs(_SEARCH_TIMEOUT_S).images(
                     q, max_results=limit, backend=backend
                 )
                 or []
@@ -740,7 +776,8 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
             title = str(item.get("title") or "").strip()
             body = str(item.get("body") or item.get("snippet") or "").strip()
             key = (href.split("?")[0].lower() if href else "") or title[:48].lower()
-            if not key or key in seen:
+            blob = f"{title} {body} {href}"
+            if not key or key in seen or _JUNK_HIT.search(blob):
                 continue
             seen.add(key)
             collected.append({"title": title, "href": href, "body": body, "engine": engine})
@@ -750,7 +787,7 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
     best_score = -1.0
     # One DDGS client for the whole chain (connection reuse).
     try:
-        ddgs = DDGS(timeout=int(_SEARCH_TIMEOUT_S))
+        ddgs = _ddgs(_SEARCH_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001
         return f"No results. (ddgs: {exc})"
 
@@ -787,13 +824,12 @@ def _search(query: str, max_results: int = 5, *, workspace: Path | None = None) 
         _take(best_rows, best_engine)
 
     # Refuse to ship / cache junk when no engine matched the query tokens.
-    if best_score < 0.25:
-        detail = "; ".join(errors[:2]) if errors else f"score={best_score:.2f}"
-        return f"No results. (baja relevancia: {detail})"
-
-    if not collected:
-        detail = "; ".join(errors[:2]) if errors else "sin detalle"
-        return f"No results. ({detail})"
+    if best_score < 0.25 or not collected:
+        if errors:
+            print(f"[SEARCH] fail {'; '.join(errors[:2])}")
+        else:
+            print(f"[SEARCH] fail score={best_score:.2f}")
+        return "No results."
 
     collected = collected[:limit]
     lines = [f"Source: {engine_used} ({len(collected)} hits)."]

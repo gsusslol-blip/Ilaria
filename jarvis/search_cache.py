@@ -47,7 +47,8 @@ def _freshness_query(text: str) -> bool:
     return bool(
         re.search(
             r"\b(hoy|ahora|precio|cotiz|dolar|dólar|blue|mep|ccl|oficial|"
-            r"noticia|clima|weather|temp|bitcoin|btc|eth|crypto|cripto)\b",
+            r"noticia|clima|weather|temp|bitcoin|btc|eth|crypto|cripto|"
+            r"presidente|mundial|ultim[oa]|gan[oó])\b",
             (text or "").lower(),
         )
     )
@@ -56,6 +57,23 @@ def _freshness_query(text: str) -> bool:
 def is_freshness_query(text: str) -> bool:
     """Public facts that must be fetched live (FX, news, weather, spot prices)."""
     return _freshness_query(text)
+
+
+def _is_failed_answer(text: str) -> bool:
+    """Engine/HTTP dumps must not be spoken or cached as facts."""
+    low = (text or "").strip().lower()
+    if not low:
+        return True
+    return low.startswith(
+        (
+            "no results",
+            "wikipedia failed",
+            "no pude abrir wikipedia",
+            "no encontré esa página",
+            "no encontre esa pagina",
+            "empty query",
+        )
+    ) or "invalid impersonate" in low
 
 
 def _tokens(text: str) -> list[str]:
@@ -196,7 +214,7 @@ def lookup(
     if best is None or best_score < thr:
         return None
     answer = str(best.get("answer") or "").strip()
-    if not answer:
+    if not answer or _is_failed_answer(answer):
         return None
     # Guard: skip poisoned dump cache hits (e.g. F1 for "descubrió América").
     # Short prose answers may paraphrase without repeating every query token.
@@ -234,7 +252,7 @@ def store(
     body = (answer or "").strip()
     if len(q) < 4 or len(body) < 8:
         return
-    if body.startswith("No results") or body.startswith("Empty query"):
+    if _is_failed_answer(body) or body.startswith("Empty query"):
         return
     path = cache_path(workspace)
     rows = _load(path)

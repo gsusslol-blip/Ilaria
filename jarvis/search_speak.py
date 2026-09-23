@@ -14,6 +14,56 @@ def _fold(text: str) -> str:
     return (text or "").lower().translate(_ACCENT)
 
 
+def _asks_current(query: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(ultim[oa]|actual|hoy|ahora|gano|noticia|presidente)\b",
+            _fold(query or ""),
+        )
+    )
+
+
+def _fact_bias(query: str, text: str) -> float:
+    """Prefer the sentence that states the fact, not a year-only headline."""
+    folded_q = _fold(query or "")
+    folded = re.sub(r"\bpresident\b", "presidente", _fold(text or ""))
+    score = 0.0
+    if re.search(r"\bpresidente\b", folded_q):
+        if "presidente" in folded:
+            score += 3
+        else:
+            score -= 6
+        if re.search(
+            r"\b(is|es)\s+(?!el\b|la\b|un\b|una\b|los\b|las\b|jefe\b)[a-z0-9áéíóúñ]",
+            folded,
+        ):
+            score += 4
+        if re.search(r"punto de inflexion|definira|desactualizado|este articulo", folded):
+            score -= 6
+    if re.search(r"\bgano\b", folded_q):
+        if re.search(r"\b(gano|conquisto|derrot|campeon|vencio)\b", folded):
+            score += 6
+        if re.search(r"fue el partido|definicion del titulo|estuvo programado", folded):
+            score -= 6
+    return score
+
+
+def _year_bias(query: str, text: str) -> float:
+    """Boost lines from this year. Drop lines stuck on an older year."""
+    if not _asks_current(query):
+        return 0.0
+    from datetime import datetime
+
+    years = [int(item) for item in re.findall(r"\b20\d{2}\b", text or "")]
+    now = datetime.now().year
+    if not years:
+        return 0.0
+    newest = max(years)
+    if newest >= now - 1:
+        return 4.0
+    return -8.0
+
+
 # Injected into the research synth turn (Groq/Ollama) after tools return.
 SEARCH_SPEAK_INSTRUCTION = (
     "Vas a responder la duda del usuario basándote únicamente en el contexto de búsqueda provisto. "
@@ -44,7 +94,8 @@ _NOISE_LINE = re.compile(
 _NOISE_CHUNK = re.compile(
     r"\b(prezi|timetoast|l[ií]neas?\s+de\s+nazca|descubriamerica|by\s+\w+\s+rojas|"
     r"countriq|haz\s+clic\s+aqu[ií]|te\s+explicamos\s+qu[eé]|world\s+heritage\s+site|"
-    r"descubre\s+el\s+significado|todas\s+las\s+acepciones|mapa\s+y\s+vecinos)\b",
+    r"descubre\s+el\s+significado|todas\s+las\s+acepciones|mapa\s+y\s+vecinos|"
+    r"banca\s+online|iniciar\s+sesi[oó]n|acced[eé]\s+a\s+tu\s+cuenta)\b",
     re.I,
 )
 _SEO_TITLE = re.compile(
@@ -186,7 +237,7 @@ def speakable_from_search(
         ans = re.search(r"respuesta\s*:\s*(.+)$", clean, re.I | re.S)
         if ans and len(ans.group(1).split()) >= 4:
             clean = ans.group(1).strip()
-        folded = _fold(clean)
+        folded = re.sub(r"\bpresident\b", "presidente", _fold(clean))
         token_hits = sum(1 for t in q_tokens if t in folded)
         score = float(token_hits)
         for t in q_tokens:
@@ -210,6 +261,13 @@ def speakable_from_search(
             score -= 3
         if re.search(r"varias teor[ií]as|hay varias", clean, re.I):
             score -= 2
+        if re.search(
+            r"toda la actualidad|ultimas noticias|portal de noticias|te damos la bienvenida",
+            folded,
+        ):
+            score -= 5
+        score += _year_bias(query, clean)
+        score += _fact_bias(query, clean)
         if len(clean.split()) > 45:
             score -= 1
         if score > best_score or (score == best_score and len(clean) < len(best or " " * 999)):
@@ -229,14 +287,18 @@ def speakable_from_search(
         return ""
 
     # Pick the strongest sentence inside the winning chunk (not just the first).
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", best) if s.strip()]
+    sentences = [
+        s.strip()
+        for s in re.split(r"(?<![A-Z].)(?<=[.!?…])\s+", best)
+        if s.strip()
+    ]
     if len(sentences) > 1:
         best_sent = ""
         best_sent_score = -1.0
         for sent in sentences:
             if len(sent.split()) < 4:
                 continue
-            sf = _fold(sent)
+            sf = re.sub(r"\bpresident\b", "presidente", _fold(sent))
             sc = float(sum(1 for t in q_tokens if t in sf))
             if _COLON_HINT.search(sent):
                 sc += 4
@@ -246,6 +308,8 @@ def speakable_from_search(
                 sc -= 3
             if re.search(r"varias teor[ií]as|hay varias", sent, re.I):
                 sc -= 4
+            sc += _year_bias(query, sent)
+            sc += _fact_bias(query, sent)
             if sc > best_sent_score:
                 best_sent_score = sc
                 best_sent = sent
@@ -258,7 +322,19 @@ def speakable_from_search(
             if not (candidate.startswith("¿") or candidate.endswith("?")):
                 best = candidate
 
-    return _trim_words(re.sub(r"\s+", " ", best).strip(), max_words)
+    spoken = re.sub(r"\s+", " ", best).strip()
+    # A "latest / today" question must not be answered with a years-old line.
+    if _asks_current(query) and _year_bias(query, spoken) <= -6:
+        return ""
+    folded_q = _fold(query or "")
+    folded_spoken = re.sub(r"\bpresident\b", "presidente", _fold(spoken))
+    if re.search(r"\bpresidente\b", folded_q) and "presidente" not in folded_spoken:
+        return ""
+    if re.search(r"\bgano\b", folded_q) and not re.search(
+        r"\b(gano|conquisto|derrot|campeon|vencio)\b", folded_spoken
+    ):
+        return ""
+    return _trim_words(spoken, max_words)
 
 
 def looks_like_search_dump(text: str) -> bool:

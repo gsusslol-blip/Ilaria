@@ -71,6 +71,7 @@ class UpdateResult:
     message: str
     from_version: str = LOCAL_VERSION
     to_version: str = LOCAL_VERSION
+    written: tuple[str, ...] = ()
 
 
 def parse_version(raw: str) -> tuple[int, int, int]:
@@ -88,9 +89,18 @@ def version_ge(left: str, right: str) -> bool:
     return parse_version(left) >= parse_version(right)
 
 
+# Every install checks this unless ILARIA_UPDATE_URL is set to empty on purpose.
+DEFAULT_UPDATE_URL = (
+    "https://github.com/gsusslol-blip/Ilaria/releases/latest/download/version.json"
+)
+
+
 def update_url() -> str:
-    """Public manifest URL. Empty = updates disabled."""
-    return (os.getenv("ILARIA_UPDATE_URL") or "").strip()
+    """Public manifest URL. Empty string in the environment disables updates."""
+    raw = os.getenv("ILARIA_UPDATE_URL")
+    if raw is None:
+        return DEFAULT_UPDATE_URL
+    return raw.strip()
 
 
 def updates_dir() -> Path:
@@ -324,7 +334,7 @@ def check_and_apply(*, force: bool = False, manifest_url: str | None = None) -> 
         if not planned:
             raise ValueError("ZIP vacio o sin rutas permitidas.")
         backup_paths(planned)
-        apply_zip(zip_path, expected_sha=remote.sha256)
+        written = apply_zip(zip_path, expected_sha=remote.sha256)
     except Exception as exc:  # noqa: BLE001
         return UpdateResult("error", f"Fallo al aplicar update: {exc}", to_version=remote.version)
 
@@ -340,11 +350,14 @@ def check_and_apply(*, force: bool = False, manifest_url: str | None = None) -> 
         f"Actualizado {LOCAL_VERSION} → {remote.version}. Reinicio del proceso recomendado.",
         from_version=LOCAL_VERSION,
         to_version=remote.version,
+        written=tuple(written),
     )
 
 
 def maybe_update_on_boot() -> UpdateResult:
-    """Called from main.py. Opt-in via env; never blocks boot on network errors."""
+    """Called from main.py. On by default; never blocks boot on network errors."""
+    if os.getenv("ILARIA_JUST_UPDATED") == "1":
+        return UpdateResult("skipped", "Recién actualizado; no vuelvo a bajar en este arranque.")
     enabled = (os.getenv("ILARIA_AUTO_UPDATE") or "1").strip().lower()
     if enabled in {"0", "false", "no", "off"}:
         return UpdateResult("skipped", "ILARIA_AUTO_UPDATE=off")

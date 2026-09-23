@@ -24,6 +24,12 @@ def try_local_command(
 ) -> str | None:
     """Run deterministic tools. None = leave it to the LLM."""
     raw = text.strip()
+    raw = re.sub(
+        r"^(?:hola|hey|buenas(?:\s+(?:d[ií]as|tardes|noches))?|buenos\s+d[ií]as)[\s,.:\-]*",
+        "",
+        raw,
+        flags=re.I,
+    ).strip()
     raw = re.sub(r"^(?:hey\s+)?ilaria\b[\s,.:\-]*", "", raw, flags=re.I).strip()
     lower = raw.lower()
     city = _city(raw, memory)
@@ -707,8 +713,21 @@ def try_local_command(
         return run("recall")
 
     wiki = re.match(r"^(?:qu[eé]\s+es|qui[eé]n\s+es|wikipedia)\s+(.+)$", raw, re.I)
-    if wiki:
-        return run("wikipedia", topic=wiki.group(1).strip())
+    office = re.match(
+        r"^(?:el\s+|la\s+)?presidente\s+de\s+(.+)$",
+        raw.strip(" .?¿!"),
+        re.I,
+    )
+    if wiki or office:
+        topic = (wiki or office).group(1).strip(" .?¿!")
+        if office and not re.search(r"\bpresidente\b", topic, re.I):
+            topic = f"presidente de {topic}"
+        answer = run("wikipedia", topic=topic)
+        if answer and not _lookup_failed(answer) and _names_current_office(answer):
+            return answer
+        if answer and not _lookup_failed(answer) and not re.search(r"\bpresidente\b", topic, re.I):
+            return answer
+        return _spoken_search(run, f"{topic} actual", raw)
 
     maps = re.match(
         r"^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|llevame\s+a|ll[eé]vame\s+a|"
@@ -764,14 +783,17 @@ def try_local_command(
             return hit
 
     if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur|mep|ccl)\b", lower):
+        from jarvis.live_facts import live_market_quote
+
+        quoted = live_market_quote(raw)
+        if quoted:
+            return quoted
         hit = run("web_search", query=raw, max_results=5)
         from jarvis.search_speak import speakable_from_search
 
         spoken = speakable_from_search(hit or "", raw, max_words=45)
         if spoken:
             return spoken
-        if hit and not str(hit).startswith("No results") and "error" not in str(hit).lower()[:40]:
-            return str(hit)[:900]
         return "No pude cotizar en este momento. Probá de nuevo en un toque."
 
     img = re.match(
@@ -823,9 +845,17 @@ def try_local_command(
         if lower.startswith("google"):
             if android:
                 return run("phone_hands", action="search", target=query)
-            # Prefer web_search (Bing + semantic cache) over opening a browser tab.
-            return run("web_search", query=query, max_results=5)
-        return run("web_search", query=query, max_results=5)
+            # Spoken answer, never the raw hit list.
+            return _spoken_search(run, query, raw)
+        if lower.startswith("noticias"):
+            topic = re.sub(r"^(?:de|del|la|las|los)\s+", "", query, flags=re.I).strip()
+            from jarvis.live_facts import live_headlines
+
+            headlines = live_headlines(topic)
+            if headlines:
+                return headlines
+            return _spoken_search(run, f"noticias {topic}".strip(), raw)
+        return _spoken_search(run, query, raw)
 
     if len(raw) >= 12 and re.search(
         r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|"
@@ -833,7 +863,7 @@ def try_local_command(
         r"definici[oó]n|significa)\b",
         lower,
     ):
-        return run("web_search", query=_strip_question_shell(raw), max_results=5)
+        return _spoken_search(run, _strip_question_shell(raw), raw)
 
     return None
 
@@ -1076,6 +1106,49 @@ def _strip_question_shell(text: str) -> str:
         flags=re.I,
     )
     return " ".join(t.split()).strip(" .")
+
+
+def _lookup_failed(text: str) -> bool:
+    from jarvis.search_cache import _is_failed_answer
+
+    return _is_failed_answer(text)
+
+
+def _names_current_office(text: str) -> bool:
+    """True when the line says who holds the job, not only what the job is."""
+    return bool(
+        re.search(
+            r"\b(actual(?:mente)?|ejerce como|en el cargo|tom[oó] posesi[oó]n)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def _with_current_year(query: str) -> str:
+    from datetime import datetime
+
+    year = str(datetime.now().year)
+    if year in (query or ""):
+        return query
+    if re.search(
+        r"\b(últim[oa]|ultim[oa]|actual|hoy|ahora|gan[oó]|noticia|presidente)\b",
+        query or "",
+        re.I,
+    ):
+        return f"{query} {year}".strip()
+    return query
+
+
+def _spoken_search(run: Callable[..., str], query: str, raw: str) -> str:
+    from jarvis.search_speak import speakable_from_search
+
+    query = _with_current_year(query)
+    hit = run("web_search", query=query, max_results=5)
+    spoken = speakable_from_search(hit or "", query, max_words=45)
+    if spoken and not _lookup_failed(spoken):
+        return spoken
+    return "No pude buscar eso ahora. Probá de nuevo en un toque."
 
 
 _CAPITALS: dict[str, str] = {

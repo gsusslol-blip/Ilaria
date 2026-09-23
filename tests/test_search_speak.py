@@ -8,6 +8,30 @@ from jarvis.search_speak import clean_search_results, looks_like_search_dump, sp
 
 
 class SearchSpeakTests(unittest.TestCase):
+    def test_latest_fact_prefers_this_year(self) -> None:
+        raw = (
+            "Source: yahoo (2 hits).\n"
+            "- Mundial 2022\n"
+            "  https://example.com/2022\n"
+            "  Argentina ganó el último Mundial, en 2022, venciendo a Francia.\n"
+            "- Mundial 2026\n"
+            "  https://example.com/2026\n"
+            "  España ganó el Mundial 2026 al vencer 1-0 a Argentina.\n"
+        )
+        out = speakable_from_search(raw, "quien gano el ultimo mundial", max_words=40)
+        self.assertIn("2026", out)
+        self.assertNotIn("2022", out)
+
+    def test_office_line_leads_with_the_current_holder(self) -> None:
+        from jarvis.actions import _wiki_speakable
+
+        out = _wiki_speakable(
+            "El presidente es el jefe de Estado. "
+            "El actual presidente, Javier Milei, tomó posesión el 10 de diciembre de 2023."
+        )
+        self.assertTrue(out.lower().startswith("el actual presidente"))
+        self.assertIn("Milei", out)
+
     def test_strips_dump_to_one_line(self) -> None:
         raw = (
             "Source: bing (5 hits).\n"

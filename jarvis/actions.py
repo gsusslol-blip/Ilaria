@@ -125,6 +125,48 @@ _OPS: dict[type, Any] = {
 }
 
 
+def _wiki_resolve(client: httpx.Client, query: str) -> tuple[str, str]:
+    """Pick a real article title. Raw questions are not page slugs (404)."""
+    for host in ("https://es.wikipedia.org", "https://en.wikipedia.org"):
+        try:
+            response = client.get(
+                f"{host}/w/api.php",
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": query,
+                    "srlimit": 1,
+                    "format": "json",
+                    "utf8": 1,
+                },
+            )
+            response.raise_for_status()
+            hits = ((response.json().get("query") or {}).get("search") or [])
+        except Exception:  # noqa: BLE001
+            continue
+        if hits and str(hits[0].get("title") or "").strip():
+            return host, str(hits[0]["title"]).strip()
+    return "", ""
+
+
+def _wiki_speakable(extract: str) -> str:
+    text = " ".join(extract.split())
+    parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    # Lead with who holds the office now, not the job description.
+    current = next(
+        (
+            part
+            for part in parts
+            if re.search(r"\b(actual|ejerce como|en el cargo|tom[oó] posesi[oó]n)\b", part, re.I)
+        ),
+        "",
+    )
+    spoken = current or " ".join(parts[:2]).strip()
+    if len(spoken) > 420:
+        spoken = spoken[:420].rsplit(" ", 1)[0].rstrip(",;:") + "."
+    return spoken or text[:420]
+
+
 class Actions:
     def __init__(
         self,
@@ -205,26 +247,34 @@ class Actions:
         return str(value)
 
     def wikipedia(self, topic: str) -> str:
-        title = quote(topic.strip().replace(" ", "_"))
-        url = f"https://es.wikipedia.org/api/rest_v1/page/summary/{title}"
+        query = " ".join((topic or "").split()).strip(" .?¿!")
+        if not query:
+            return "Decime qué tema buscar en Wikipedia."
         # Wikimedia requires a descriptive User-Agent (403 if browser-like or too vague).
         headers = {
-            "User-Agent": "IlariaLocalAssistant/1.5 (https://localhost; personal-assistant)",
+            "User-Agent": "IlariaLocalAssistant/1.6 (https://localhost; personal-assistant)",
             "Accept": "application/json",
         }
         try:
             with httpx.Client(timeout=15.0, follow_redirects=True, headers=headers) as client:
-                response = client.get(url)
-                if response.status_code == 404:
-                    url_en = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
-                    response = client.get(url_en)
+                host, title = _wiki_resolve(client, query)
+                if not host or not title:
+                    return "No encontré esa página en Wikipedia."
+                slug = quote(title.replace(" ", "_"), safe="")
+                response = client.get(f"{host}/api/rest_v1/page/summary/{slug}")
+                if response.status_code == 404 and host.startswith("https://es."):
+                    response = client.get(
+                        f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}"
+                    )
                 response.raise_for_status()
                 payload = response.json()
-        except Exception as exc:  # noqa: BLE001
-            return f"Wikipedia failed: {exc}"
-        extract = payload.get("extract") or ""
-        page = (payload.get("content_urls") or {}).get("desktop", {}).get("page", "")
-        return f"{payload.get('title', topic)}\n{extract}\n{page}".strip()
+        except Exception:  # noqa: BLE001
+            return "No pude abrir Wikipedia en este momento."
+        extract = (payload.get("extract") or "").strip()
+        if not extract:
+            found = str(payload.get("title") or query).strip()
+            return f"Encontré «{found}» pero sin resumen."
+        return _wiki_speakable(extract)
 
     def open_browser(self, url: str) -> str:
         parsed = urlparse(url)

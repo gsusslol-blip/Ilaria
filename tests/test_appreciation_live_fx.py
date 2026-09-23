@@ -6,6 +6,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -46,6 +47,20 @@ class AppreciationAndLiveFxTests(unittest.TestCase):
         )
         self.assertEqual(out, _APPRECIATION_REPLY)
 
+    def test_dolar_uses_live_quote_when_available(self) -> None:
+        def execute(name: str, arguments_json: str) -> str:
+            raise AssertionError(name)
+
+        with patch("jarvis.live_facts.live_market_quote", return_value="El dólar blue está a 1540 pesos la compra y 1560 la venta."):
+            out = try_local_command(
+                "a cuánto está el dólar blue",
+                execute,
+                Memory(),
+                load_settings(),
+            )
+        self.assertIn("1540", out or "")
+        self.assertNotIn("Source:", out or "")
+
     def test_dolar_triggers_live_search(self) -> None:
         calls: list[tuple[str, dict]] = []
 
@@ -58,12 +73,13 @@ class AppreciationAndLiveFxTests(unittest.TestCase):
                 "  El dólar blue cotiza a 1200 pesos para la venta.\n"
             )
 
-        out = try_local_command(
-            "a cuánto está el dólar blue",
-            execute,
-            Memory(),
-            load_settings(),
-        )
+        with patch("jarvis.live_facts.live_market_quote", return_value=None):
+            out = try_local_command(
+                "a cuánto está el dólar blue",
+                execute,
+                Memory(),
+                load_settings(),
+            )
         self.assertTrue(calls)
         self.assertEqual(calls[0][0], "web_search")
         self.assertIsNotNone(out)
