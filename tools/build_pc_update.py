@@ -28,6 +28,8 @@ def _should_skip(path: Path) -> bool:
         return True
     if path.name.endswith(".pyc"):
         return True
+    if "opticel" in path.name.lower():
+        return True
     return False
 
 

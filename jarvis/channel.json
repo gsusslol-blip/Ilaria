@@ -1,10 +1,10 @@
 {
-  "version": "1.6.0",
+  "version": "1.6.1",
   "min_required_android_client": "1.5.9",
   "changelog": [
-    "Traducción hablada (translate_text)",
-    "Guías Windows, red LAN, compras, bitácora, música y opiniones",
-    "Reconocimiento de quién habla (huellas de voz)",
-    "PC/Android/iOS 1.6.0"
+    "Euro en vivo, pedidos encadenados y el modelo chico no inventa datos",
+    "Voz italiana e inglesa offline si se corta Edge",
+    "El puente fuera de casa se suelta si quedó tomado",
+    "PC 1.6.1"
   ]
 }

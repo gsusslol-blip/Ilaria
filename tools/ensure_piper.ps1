@@ -51,18 +51,27 @@ function Ensure-PiperBinary {
     Write-Host "[Piper] Motor instalado."
 }
 
+function Ensure-VoiceFile([string]$Name, [string]$Url, [int]$MinBytes) {
+    $dest = Join-Path $TtsDir $Name
+    if (Test-Path $dest) { return }
+    Write-Host "[TTS] Falta $Name. Bajando..."
+    Get-File $Url $dest $MinBytes
+}
+
 function Ensure-Voice {
     New-Item -ItemType Directory -Force -Path $TtsDir | Out-Null
-    if (-not (Test-Path $Onnx)) {
-        Write-Host "[TTS] Falta es_AR-daniela-high.onnx. Bajando voz argentina..."
-        Get-File $VoiceOnnxUrl $Onnx 50000000
-    }
-    if (-not (Test-Path $OnnxJson)) {
-        Write-Host "[TTS] Falta el .onnx.json. Bajando config..."
-        Get-File $VoiceJsonUrl $OnnxJson 200
-    }
+    Ensure-VoiceFile "es_AR-daniela-high.onnx" $VoiceOnnxUrl 50000000
+    Ensure-VoiceFile "es_AR-daniela-high.onnx.json" $VoiceJsonUrl 200
+    # Offline stand-ins when Edge (needs network) is the online voice.
+    $base = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
+    Ensure-VoiceFile "it_IT-paola-medium.onnx" "$base/it/it_IT/paola/medium/it_IT-paola-medium.onnx?download=true" 20000000
+    Ensure-VoiceFile "it_IT-paola-medium.onnx.json" "$base/it/it_IT/paola/medium/it_IT-paola-medium.onnx.json?download=true" 200
+    Ensure-VoiceFile "it_IT-riccardo-x_low.onnx" "$base/it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx?download=true" 8000000
+    Ensure-VoiceFile "it_IT-riccardo-x_low.onnx.json" "$base/it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx.json?download=true" 200
+    Ensure-VoiceFile "en_US-lessac-medium.onnx" "$base/en/en_US/lessac/medium/en_US-lessac-medium.onnx?download=true" 20000000
+    Ensure-VoiceFile "en_US-lessac-medium.onnx.json" "$base/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true" 200
     if ((Test-Path $Onnx) -and (Test-Path $OnnxJson)) {
-        Write-Host "[TTS] Voz Daniela (es-AR, alta) lista."
+        Write-Host "[TTS] Voz Daniela (es-AR, alta) lista. Italiano e ingles offline tambien."
     }
 }
 

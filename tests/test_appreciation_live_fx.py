@@ -87,6 +87,83 @@ class AppreciationAndLiveFxTests(unittest.TestCase):
         self.assertNotIn("Source:", out)
         self.assertRegex(out.lower(), r"1200|dólar|dolar|peso")
 
+    def test_euro_quote_uses_cotizaciones(self) -> None:
+        payload = [
+            {"moneda": "USD", "casa": "oficial", "compra": 1485, "venta": 1535},
+            {"moneda": "EUR", "casa": "oficial", "compra": 1714.8, "venta": 1760.2},
+        ]
+
+        class _Resp:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> list[dict[str, object]]:
+                return payload
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def __enter__(self) -> _Client:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def get(self, url: str, **kwargs: object) -> _Resp:
+                self.url = url
+                return _Resp()
+
+        with patch("jarvis.live_facts.httpx.Client", _Client):
+            from jarvis.live_facts import live_market_quote
+
+            out = live_market_quote("cuanto esta el euro")
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertIn("1.715", out)
+        self.assertIn("1.760", out)
+
+    def test_compound_runs_each_local_piece(self) -> None:
+        from jarvis.local import try_compound_commands
+
+        def execute(name: str, arguments_json: str) -> str:
+            if name == "now":
+                return "12:00"
+            if name == "weather":
+                return "Nublado, 13 C"
+            return "no"
+
+        out = try_compound_commands(
+            "que hora es y clima",
+            execute,
+            Memory(),
+            load_settings(),
+        )
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertIn("12:00", out)
+        self.assertIn("Nublado", out)
+
+    def test_compound_leaves_a_single_phrase(self) -> None:
+        from jarvis.local import try_compound_commands
+
+        out = try_compound_commands(
+            "que hora es",
+            lambda name, arguments_json: "12:00",
+            Memory(),
+            load_settings(),
+        )
+        self.assertIsNone(out)
+
+    def test_installer_qwen_is_small_and_groq_is_not(self) -> None:
+        from jarvis.llm import is_small_local_model
+
+        settings = load_settings()
+        self.assertTrue(
+            is_small_local_model(settings, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+        )
+        self.assertFalse(is_small_local_model(settings, "openai/gpt-oss-20b"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -868,6 +868,53 @@ def try_local_command(
     return None
 
 
+_COMPOUND_SPLIT = re.compile(r"\s*(?:;|\by\b)\s*", re.I)
+
+
+def split_compound_phrase(text: str) -> list[str]:
+    """Split 'clima y qué hora es'. Leave comparisons and FX phrases whole."""
+    raw = " ".join((text or "").split()).strip()
+    if not raw:
+        return []
+    if re.search(r"\b(m[aá]s|versus|\bvs\b|\bo\b)\b", raw, re.I):
+        return []
+    if re.search(r"\b(d[oó]lar|euro|eur|bitcoin|btc|blue|mep|ccl)\b", raw, re.I):
+        return []
+    parts = [part.strip(" .,;") for part in _COMPOUND_SPLIT.split(raw) if part.strip(" .,;")]
+    if len(parts) < 2 or len(parts) > 4:
+        return []
+    if any(len(part) < 4 for part in parts):
+        return []
+    return parts
+
+
+def try_compound_commands(
+    text: str,
+    execute: Execute,
+    memory: Memory,
+    settings: Settings,
+    allowed: set[str] | None = None,
+    surface: str = "hud",
+) -> str | None:
+    """Run each piece of a chained phrase. None if any piece is not a shortcut."""
+    parts = split_compound_phrase(text)
+    if not parts:
+        return None
+    from jarvis.fast_path import try_fast_path
+
+    done: list[str] = []
+    for part in parts:
+        hit = try_fast_path(part, execute, surface=surface, allowed=allowed)
+        if hit is None:
+            hit = try_local_command(part, execute, memory, settings, allowed, surface=surface)
+        if not hit:
+            return None
+        done.append(hit.strip())
+    if len(done) < 2:
+        return None
+    return " ".join(piece for piece in done if piece)
+
+
 def local_reply(
     text: str,
     execute: Execute,

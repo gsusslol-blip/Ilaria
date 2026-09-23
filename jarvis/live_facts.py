@@ -47,14 +47,25 @@ def live_headlines(topic: str, limit: int = 2) -> str | None:
 def live_market_quote(text: str) -> str | None:
     """Return a spoken FX/crypto quote, or None so the caller can search."""
     low = (text or "").lower()
+    parts: list[str] = []
     try:
         if re.search(r"\b(bitcoin|btc)\b", low):
-            return _bitcoin()
+            hit = _bitcoin()
+            if hit:
+                parts.append(hit)
         if re.search(r"\b(d[oó]lar(?:es)?|blue|mep|ccl)\b", low):
-            return _dolar(low)
+            hit = _dolar(low)
+            if hit:
+                parts.append(hit)
+        if re.search(r"\b(euro|eur)\b", low):
+            hit = _euro()
+            if hit:
+                parts.append(hit)
     except Exception:  # noqa: BLE001
-        return None
-    return None
+        if not parts:
+            return None
+    spoken = " ".join(parts).strip()
+    return spoken or None
 
 
 def _pesos(value: Any) -> str:
@@ -105,6 +116,34 @@ def _dolar(low: str) -> str | None:
     if not spoken.endswith("."):
         spoken += "."
     return spoken
+
+
+def _euro() -> str | None:
+    """EUR oficial from the same cotizaciones feed as the dollar boards."""
+    with httpx.Client(timeout=8.0, headers=_HEADERS, follow_redirects=True) as client:
+        response = client.get("https://dolarapi.com/v1/cotizaciones")
+        response.raise_for_status()
+        rows = response.json()
+    if not isinstance(rows, list):
+        return None
+    chosen: dict[str, Any] | None = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("moneda") or "").upper() != "EUR":
+            continue
+        casa = str(row.get("casa") or "").lower()
+        if casa == "oficial":
+            chosen = row
+            break
+        if chosen is None:
+            chosen = row
+    if not chosen:
+        return None
+    return (
+        f"El euro está a {_pesos(chosen.get('compra'))} pesos la compra "
+        f"y {_pesos(chosen.get('venta'))} la venta."
+    )
 
 
 def _bitcoin() -> str | None:

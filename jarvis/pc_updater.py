@@ -50,6 +50,7 @@ SKIP_NAME_PARTS = (
     ".android-sdk",
     "android/app/build",
     "bin/piper",
+    "opticel",
 )
 
 

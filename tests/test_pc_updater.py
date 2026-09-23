@@ -38,11 +38,13 @@ class PcUpdaterTests(unittest.TestCase):
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr("data/secrets.txt", "nope")
                 zf.writestr("../outside.txt", "nope")
+                zf.writestr("tools/opticel_boot.ps1", "nope")
                 zf.writestr("jarvis/ok.py", "ok = 1\n")
             written = apply_zip(zip_path, root=root)
             self.assertEqual(written, ["jarvis/ok.py"])
             self.assertTrue((root / "jarvis" / "ok.py").is_file())
             self.assertFalse((root / "data" / "secrets.txt").exists())
+            self.assertFalse((root / "tools" / "opticel_boot.ps1").exists())
 
     def test_sha_and_apply_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

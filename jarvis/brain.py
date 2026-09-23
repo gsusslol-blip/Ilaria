@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from jarvis.actions import Actions
@@ -597,9 +597,23 @@ class Brain:
         self._persist_history(session_id)
 
         from jarvis.fast_path import try_fast_path
-        from jarvis.local import try_local_command
+        from jarvis.local import try_compound_commands, try_local_command
 
         surface = getattr(self.actions, "client_surface", "hud")
+        compound = try_compound_commands(
+            text,
+            self.execute,
+            self.memory,
+            self.settings,
+            self.allowed_tools,
+            surface=surface,
+        )
+        if compound:
+            answer = self._finish(compound)
+            self._store(session_id, answer)
+            yield answer
+            return
+
         fast = try_fast_path(
             text,
             self.execute,
@@ -642,6 +656,13 @@ class Brain:
                     return
 
         small = is_small_local_model(self.settings, self.endpoint.model)
+        if small and _live_fact_query(text) and not re.search(_OPINION_HINT, text, re.I):
+            spoken = _spoken_web_search(self.execute, text)
+            answer = self._finish(spoken or _OFFLINE_FACT_REPLY)
+            self._store(session_id, answer)
+            yield answer
+            return
+
         actionish = bool(re.search(_ACTION_HINT, text, re.I))
         manageish = bool(re.search(_MANAGE_HINT, text, re.I))
         opinionish = bool(re.search(_OPINION_HINT, text, re.I))
@@ -1097,6 +1118,41 @@ class Brain:
                 answer = f"{answer}\n{hint}"
             self._store(session_id, answer)
             yield answer
+
+
+_LIVE_FACT_RE = re.compile(
+    r"\b(presidente|precio|cotiz|d[oó]lar|euro|eur|bitcoin|btc|gan[oó]|noticia|"
+    r"últim[oa]|ultimo|mundial)\b",
+    re.I,
+)
+_OFFLINE_FACT_REPLY = (
+    "No puedo verificar ese dato ahora. El modelo local no tiene esa fuente "
+    "y no llegué a internet."
+)
+
+
+def _live_fact_query(text: str) -> bool:
+    return bool(_LIVE_FACT_RE.search(text or ""))
+
+
+def _spoken_web_search(execute: Callable[[str, str], str], text: str) -> str:
+    """One live search. Empty string when the network or the snippet fails."""
+    try:
+        hit = execute(
+            "web_search",
+            json.dumps({"query": (text or "")[:180], "max_results": 5}, ensure_ascii=False),
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    from jarvis.search_cache import _is_failed_answer
+    from jarvis.search_speak import speakable_from_search
+
+    if not hit or _is_failed_answer(hit):
+        return ""
+    spoken = speakable_from_search(hit, text, max_words=40)
+    if not spoken or _is_failed_answer(spoken):
+        return ""
+    return spoken
 
 
 def _looks_like_question(text: str) -> bool:
