@@ -26,7 +26,7 @@ if exist "%~dp0.local-owner.bat" call "%~dp0.local-owner.bat"
 
 set HUD_HOST=0.0.0.0
 set HUD_PORT=8787
-set JARVIS_OPEN_BROWSER=1
+set ILARIA_OPEN_BROWSER=1
 set ILARIA_UPDATE_URL=https://github.com/gsusslol-blip/Ilaria/releases/latest/download/version.json
 set ILARIA_AUTO_UPDATE=1
 set LLM_PROVIDER=auto

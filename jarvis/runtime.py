@@ -290,7 +290,7 @@ def main() -> None:
         if settings.hud_host in {"0.0.0.0", "::"} and not _lan_health_ok(settings.hud_port):
             print("CUIDADO: esa instancia solo escucha en esta PC (127.0.0.1).")
             print("El celular no entra. Cerra Ilaria por completo y volve a abrir run.bat.")
-        if os.getenv("JARVIS_OPEN_BROWSER", "1") != "0":
+        if os.getenv("ILARIA_OPEN_BROWSER", os.getenv("JARVIS_OPEN_BROWSER", "1")) != "0":
             open_ui(url, settings.assistant_name)
         return
 
@@ -346,7 +346,7 @@ def main() -> None:
         print(f"[LTM] skip: {exc}")
     start_wake_listener(state)
     start_vision(state)
-    if os.getenv("JARVIS_OPEN_BROWSER", "1") == "0":
+    if os.getenv("ILARIA_OPEN_BROWSER", os.getenv("JARVIS_OPEN_BROWSER", "1")) == "0":
         worker.join()
         return
     open_ui(url, settings.assistant_name)
