@@ -33,12 +33,36 @@ def pick_warm_model(configured: str, installed: list[str], preferred: str) -> st
     if chosen and not looks_like_cloud_model(chosen):
         if not names or any(name == chosen or name.split(":", 1)[0] == chosen.split(":", 1)[0] for name in names):
             return chosen
+    # Qwen 3 answers better. Gemma stays when that tag is not installed.
+    order = ["qwen3:1.7b"]
     want = (preferred or "gemma2:2b").strip() or "gemma2:2b"
-    family = want.split(":", 1)[0]
-    for name in names:
-        if name == want or name.split(":", 1)[0] == family:
-            return name
+    if want not in order:
+        order.append(want)
+    for candidate in order:
+        family = candidate.split(":", 1)[0]
+        for name in names:
+            if name == candidate or name.split(":", 1)[0] == family:
+                return name
     return names[0] if names else None
+
+
+def choose_local_model(settings: Settings) -> str | None:
+    """Installed local tag: Qwen 3 when it is there, otherwise Gemma."""
+    base = _ollama_base(settings)
+    preferred = (getattr(settings, "ollama_model", None) or "gemma2:2b").strip() or "gemma2:2b"
+    try:
+        with httpx.Client(timeout=4.0) as client:
+            tags = client.get(f"{base}/api/tags")
+            if tags.status_code >= 400:
+                return None
+            installed = [
+                str(item.get("name") or "")
+                for item in (tags.json().get("models") or [])
+                if isinstance(item, dict)
+            ]
+    except Exception:  # noqa: BLE001
+        return None
+    return pick_warm_model("", installed, preferred)
 
 
 def _configured_model(settings: Settings) -> str:

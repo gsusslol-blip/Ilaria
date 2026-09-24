@@ -29,6 +29,8 @@ _SMALL_MARKERS = (
     "tinyllama",
     "qwen2:1.5b",
     "qwen2.5-1.5",
+    "qwen3",
+    "1.7b",
 )
 
 

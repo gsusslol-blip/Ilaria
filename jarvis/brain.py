@@ -198,6 +198,8 @@ class Brain:
             if "11434" in base:
                 extra = dict(kwargs.pop("extra_body", None) or {})
                 extra.setdefault("keep_alive", os.getenv("OLLAMA_KEEP_ALIVE", "60m"))
+                if "qwen3" in (self.endpoint.model or "").lower():
+                    extra.setdefault("think", False)
                 kwargs["extra_body"] = extra
         if self.endpoint.label == "groq":
             last: BaseException | None = None
@@ -1094,9 +1096,11 @@ class Brain:
                 try:
                     from jarvis.config import _ollama_reachable
                     from jarvis.llm import _ollama_endpoint
+                    from jarvis.ollama_warmer import choose_local_model
 
                     if _ollama_reachable(self.settings.ollama_base_url):
-                        self._endpoint = _ollama_endpoint(self.settings)
+                        local_name = choose_local_model(self.settings)
+                        self._endpoint = _ollama_endpoint(self.settings, model=local_name or None)
                         # Fall through to a single local synthesis without tools.
                         response = self._chat(
                             [

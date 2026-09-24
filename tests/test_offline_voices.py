@@ -49,6 +49,22 @@ class OfflineVoiceTests(unittest.TestCase):
         )
         self.assertEqual(picked, "gemma2:2b")
 
+    def test_warm_prefers_qwen3_and_keeps_gemma(self) -> None:
+        from jarvis.ollama_warmer import pick_warm_model
+
+        both = pick_warm_model(
+            "openai/gpt-oss-20b",
+            ["gemma2:2b", "qwen3:1.7b"],
+            "gemma2:2b",
+        )
+        only_gemma = pick_warm_model(
+            "openai/gpt-oss-20b",
+            ["gemma2:2b"],
+            "gemma2:2b",
+        )
+        self.assertEqual(both, "qwen3:1.7b")
+        self.assertEqual(only_gemma, "gemma2:2b")
+
 
 if __name__ == "__main__":
     unittest.main()
