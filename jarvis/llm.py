@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import httpx
 from openai import OpenAI
 
 from jarvis.config import Settings, _ollama_reachable
+
+# Fail the socket quickly so a dead cloud falls through to the local model.
+_CLOUD_TIMEOUT = httpx.Timeout(45.0, connect=4.0)
 
 GROQ_MODELS = (
     "openai/gpt-oss-20b",
@@ -14,7 +18,20 @@ GROQ_MODELS = (
     "qwen/qwen3.6-27b",
 )
 
-_SMALL_MARKERS = (":2b", ":3b", ":1b", ":4b", "gemma2:2b", "phi3", "tinyllama", "qwen2:1.5b")
+_SMALL_MARKERS = (
+    ":2b",
+    ":3b",
+    ":1b",
+    ":4b",
+    "1.5b",
+    "gemma2:2b",
+    "phi3",
+    "tinyllama",
+    "qwen2:1.5b",
+    "qwen2.5-1.5",
+    "qwen3",
+    "1.7b",
+)
 
 
 @dataclass(frozen=True)
@@ -51,8 +68,13 @@ def is_tools_unsupported(exc: BaseException) -> bool:
 
 def is_small_local_model(settings: Settings, model: str | None = None) -> bool:
     name = (model or settings.ollama_model or settings.llm_model or "").strip().lower()
-    if settings.llm_provider in {"ollama", "llamacpp"}:
-        return any(marker in name for marker in _SMALL_MARKERS) or name in {"llama3", "gemma2"}
+    # Groq ids like openai/gpt-oss-20b are not the offline 1.5B installer.
+    if looks_like_cloud_model(name):
+        return False
+    if any(marker in name for marker in _SMALL_MARKERS) or name in {"llama3", "gemma2"}:
+        return True
+    if settings.llm_provider in {"ollama", "llamacpp"} and name.endswith(".gguf"):
+        return True
     if "gemma2:2b" in name or name.endswith(":2b"):
         return True
     return False
@@ -142,6 +164,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             client=OpenAI(
                 api_key=settings.groq_api_key,
                 base_url="https://api.groq.com/openai/v1",
+                timeout=_CLOUD_TIMEOUT,
+                max_retries=0,
             ),
             model=model or groq_model_candidates(settings)[0],
         )
@@ -152,7 +176,7 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             raise RuntimeError("OPENAI_API_KEY is empty.")
         return LLMEndpoint(
             label="openai",
-            client=OpenAI(api_key=settings.openai_api_key),
+            client=OpenAI(api_key=settings.openai_api_key, timeout=_CLOUD_TIMEOUT, max_retries=0),
             model=model or settings.llm_model or "gpt-4o-mini",
         )
     if provider == "gemini":
@@ -165,6 +189,8 @@ def resolve_llm(settings: Settings, model: str | None = None) -> LLMEndpoint:
             client=OpenAI(
                 api_key=settings.gemini_api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                timeout=_CLOUD_TIMEOUT,
+                max_retries=0,
             ),
             model=model or settings.llm_model or "gemini-2.0-flash",
         )

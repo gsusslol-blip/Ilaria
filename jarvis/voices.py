@@ -9,6 +9,7 @@ from typing import Any
 from jarvis.piper_tts import _voice_dirs
 
 DEFAULT_VOICE_ID = "ilaria"
+LANG_DEFAULT_VOICE = {"es": "ilaria", "en": "jenny", "it": "elsa"}
 
 
 @dataclass(frozen=True)
@@ -73,22 +74,25 @@ _VOICE_DEFS: tuple[VoiceProfile, ...] = (
         label="Jenny (EN)",
         style="English female — for English replies",
         provider="edge",
+        piper_file="en_US-lessac-medium.onnx",
         edge_voice="en-US-JennyNeural",
         lang="en",
     ),
     VoiceProfile(
         id="elsa",
         label="Elsa (IT)",
-        style="Italiano femminile (Edge Neural)",
+        style="Italiano femminile (Edge Neural, Piper Paola sin red)",
         provider="edge",
+        piper_file="it_IT-paola-medium.onnx",
         edge_voice="it-IT-ElsaNeural",
         lang="it",
     ),
     VoiceProfile(
         id="diego",
         label="Diego (IT)",
-        style="Italiano maschile (Edge Neural)",
+        style="Italiano maschile (Edge Neural, Piper Riccardo sin red)",
         provider="edge",
+        piper_file="it_IT-riccardo-x_low.onnx",
         edge_voice="it-IT-DiegoNeural",
         lang="it",
     ),
@@ -119,7 +123,7 @@ def list_voices(*, available_only: bool = True) -> list[dict[str, Any]]:
     """Public catalog for /api/voices and settings UI."""
     rows: list[dict[str, Any]] = []
     for voice in _VOICE_DEFS:
-        piper_ok = _piper_file_exists(voice.piper_file) if voice.provider == "piper" else False
+        piper_ok = _piper_file_exists(voice.piper_file) if voice.piper_file else False
         if voice.provider == "piper" and not piper_ok:
             # Still list with edge fallback so the menu is never empty.
             engine = "edge" if voice.edge_voice else ""
@@ -172,24 +176,27 @@ def normalize_voice_id(raw: str | None) -> str:
     return get_voice(raw).id
 
 
+def voice_for_lang(lang: str | None) -> str:
+    key = (lang or "es").strip().lower()
+    return LANG_DEFAULT_VOICE.get(key, DEFAULT_VOICE_ID)
+
+
 def resolve_runtime(voice_id: str | None) -> dict[str, str]:
-    """Map catalog id → provider + Edge name + optional Piper onnx filename."""
+    """Map catalog id → local Piper when that file is on disk, else Edge."""
     voice = get_voice(voice_id)
-    if voice.provider == "piper" and _piper_file_exists(voice.piper_file):
-        return {
-            "id": voice.id,
-            "provider": "piper",
-            "tts_voice": voice.edge_voice or "es-AR-ElenaNeural",
-            "piper_model": voice.piper_file,
-            "edge_rate": voice.edge_rate or "+0%",
-            "edge_pitch": voice.edge_pitch or "+0Hz",
-        }
-    # Edge path (chosen or Piper missing).
+    piper_ready = bool(voice.piper_file) and _piper_file_exists(voice.piper_file)
+    # A voice that already has a Piper file never needs the network.
+    if piper_ready:
+        provider = "piper"
+    elif voice.edge_voice:
+        provider = "edge"
+    else:
+        provider = "piper"
     return {
         "id": voice.id,
-        "provider": "edge",
+        "provider": provider,
         "tts_voice": voice.edge_voice or "es-AR-ElenaNeural",
-        "piper_model": "",
+        "piper_model": voice.piper_file if piper_ready else "",
         "edge_rate": voice.edge_rate or "+0%",
         "edge_pitch": voice.edge_pitch or "+0Hz",
     }

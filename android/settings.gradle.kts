@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "JARVIS"
+rootProject.name = "Ilaria"
 include(":app")

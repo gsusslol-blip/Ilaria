@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ilaria</title>
+  <style>
+    :root {
+      --bg: #070709;
+      --text: #f4f4f5;
+      --pink: #ff2a54;
+      --line: rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background:
+        radial-gradient(ellipse 55% 70% at 78% 50%, rgba(255, 42, 84, 0.16), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    main {
+      min-height: 100%;
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(320px, 520px);
+      gap: 48px;
+      align-items: center;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 48px 40px;
+    }
+    .logo {
+      margin: 0 0 28px;
+      letter-spacing: 0.34em;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(48px, 6vw, 76px);
+      font-weight: 560;
+      letter-spacing: -0.045em;
+      line-height: 0.96;
+    }
+    .cta {
+      display: inline-block;
+      margin-top: 32px;
+      background: #fff;
+      color: #111;
+      text-decoration: none;
+      font-weight: 650;
+      padding: 14px 22px;
+      border-radius: 999px;
+    }
+    .cta:hover { background: #f2f2f2; }
+    .window {
+      background: #101014;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 22px;
+      box-shadow: 0 30px 70px rgba(0, 0, 0, 0.4);
+      overflow: hidden;
+    }
+    .bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      letter-spacing: 0.22em;
+    }
+    .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--pink);
+      box-shadow: 0 0 12px var(--pink);
+      animation: beat 1.8s ease-in-out infinite;
+    }
+    .live {
+      margin-left: auto;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #7d7d8c;
+      font-size: 11px;
+    }
+    .chat {
+      padding: 22px 18px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 280px;
+      justify-content: center;
+    }
+    .bubble {
+      max-width: 80%;
+      padding: 12px 14px;
+      border-radius: 16px;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+    .you {
+      align-self: flex-end;
+      background: #1c1c24;
+      color: #dedee6;
+      border-bottom-right-radius: 6px;
+    }
+    .her {
+      align-self: flex-start;
+      background: rgba(255, 42, 84, 0.12);
+      border: 1px solid rgba(255, 42, 84, 0.28);
+      border-bottom-left-radius: 6px;
+    }
+    @keyframes beat {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.82); }
+    }
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+        padding: 36px 22px 48px;
+        gap: 36px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <p class="logo">ILARIA</p>
+      <h1>Tu día,<br>más simple.</h1>
+      <a class="cta" href="https://github.com/gsusslol-blip/Ilaria/releases/latest/download/Ilaria-Setup.exe">Descargar para Windows</a>
+    </section>
+    <section class="window" aria-label="Ejemplo">
+      <div class="bar">
+        <span class="pulse"></span>
+        ILARIA
+        <span class="live">escuchando</span>
+      </div>
+      <div class="chat">
+        <div class="bubble you">Ilaria, ¿qué hora es?</div>
+        <div class="bubble her">Son las ocho y diez.</div>
+        <div class="bubble you">¿Y el clima?</div>
+        <div class="bubble her">Despejado. Dieciocho grados.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

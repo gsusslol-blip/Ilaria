@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ilaria iPhone</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b0b0b;
+      color: #f4f4f4;
+      font: 17px/1.45 system-ui, sans-serif;
+    }
+    main { max-width: 34rem; margin: 0 auto; padding: 28px 20px 48px; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 8px; }
+    p { color: #c8c8c8; }
+    ol { padding-left: 1.2rem; }
+    li { margin: 0.7rem 0; }
+    a {
+      color: #fff;
+      background: #1c1c1c;
+      border: 1px solid #3a3a3a;
+      border-radius: 10px;
+      display: inline-block;
+      padding: 12px 14px;
+      text-decoration: none;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ilaria sul iPhone</h1>
+    <p>Una volta sola. Poi il microfono funziona.</p>
+    <ol>
+      <li>Scarica il profilo e aprilo.<br /><a id="profile" href="/ilaria-ca.mobileconfig">Scarica profilo Ilaria</a></li>
+      <li>Impostazioni → Profilo scaricato → Installa.</li>
+      <li>Impostazioni → Generali → Info → Attendibilità certificati → attiva <b>Ilaria</b>.</li>
+      <li>Apri Ilaria in Safari:<br /><a id="talk" href="#">Apri Ilaria</a></li>
+    </ol>
+    <p>Stesso Wi‑Fi di casa. Il computer deve restare acceso.</p>
+  </main>
+  <script>
+    const talk = document.getElementById("talk");
+    const url = "https://" + location.hostname + ":8443/";
+    talk.href = url;
+    talk.textContent = url;
+  </script>
+</body>
+</html>

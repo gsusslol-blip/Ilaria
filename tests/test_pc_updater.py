@@ -14,11 +14,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from jarvis.pc_updater import (  # noqa: E402
+    DEFAULT_UPDATE_URL,
     apply_zip,
     check_and_apply,
     load_manifest,
     parse_version,
     sha256_file,
+    update_url,
     version_gt,
 )
 
@@ -36,11 +38,13 @@ class PcUpdaterTests(unittest.TestCase):
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr("data/secrets.txt", "nope")
                 zf.writestr("../outside.txt", "nope")
+                zf.writestr("tools/opticel_boot.ps1", "nope")
                 zf.writestr("jarvis/ok.py", "ok = 1\n")
             written = apply_zip(zip_path, root=root)
             self.assertEqual(written, ["jarvis/ok.py"])
             self.assertTrue((root / "jarvis" / "ok.py").is_file())
             self.assertFalse((root / "data" / "secrets.txt").exists())
+            self.assertFalse((root / "tools" / "opticel_boot.ps1").exists())
 
     def test_sha_and_apply_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,6 +78,16 @@ class PcUpdaterTests(unittest.TestCase):
         self.assertEqual(man.version, "9.9.9")
         res = check_and_apply(manifest_url="")
         self.assertEqual(res.status, "skipped")
+
+    def test_update_url_defaults_when_unset(self) -> None:
+        import os
+
+        old = os.environ.pop("ILARIA_UPDATE_URL", None)
+        try:
+            self.assertEqual(update_url(), DEFAULT_UPDATE_URL)
+        finally:
+            if old is not None:
+                os.environ["ILARIA_UPDATE_URL"] = old
 
     def test_end_to_end_file_urls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

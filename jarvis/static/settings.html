@@ -108,6 +108,14 @@
         </div>
       </div>
 
+      <label for="ui_lang">Idioma</label>
+      <select id="ui_lang" name="ui_lang">
+        <option value="es">Español</option>
+        <option value="en">English</option>
+        <option value="it">Italiano</option>
+      </select>
+      <p class="hint">Ilaria te escucha y te responde en este idioma. La voz de abajo es la de ese idioma.</p>
+
       <label for="tts_voice">Voz de Ilaria</label>
       <div class="row">
         <div>
@@ -250,25 +258,40 @@
           ? tone
           : "tierno";
         const voiceSel = form.tts_voice;
-        voiceSel.innerHTML = "";
-        (voicesPayload.voices || []).forEach((v) => {
-          const opt = document.createElement("option");
-          opt.value = v.id;
-          const tag = v.provider === "piper" ? "Piper" : "Edge";
-          opt.textContent = `${v.label} — ${v.style} [${tag}]`;
-          if (!v.available) opt.disabled = true;
-          voiceSel.appendChild(opt);
-        });
+        const langSel = document.getElementById("ui_lang");
+        const allVoices = voicesPayload.voices || [];
+        const langVoice = { es: "ilaria", en: "jenny", it: "elsa" };
         const chosen = u.tts_voice || me.tts_voice || voicesPayload.default || "ilaria";
-        if ([...voiceSel.options].some((o) => o.value === chosen)) voiceSel.value = chosen;
+        const chosenVoice = allVoices.find((x) => x.id === chosen);
+        langSel.value = (chosenVoice && langVoice[chosenVoice.lang]) ? chosenVoice.lang : "es";
+        const fillVoices = (lang, prefer) => {
+          voiceSel.innerHTML = "";
+          allVoices.filter((v) => v.lang === lang).forEach((v) => {
+            const opt = document.createElement("option");
+            opt.value = v.id;
+            const tag = v.provider === "piper" ? "Piper" : "Edge";
+            opt.textContent = `${v.label} — ${v.style} [${tag}]`;
+            if (!v.available) opt.disabled = true;
+            voiceSel.appendChild(opt);
+          });
+          const pick = prefer && [...voiceSel.options].some((o) => o.value === prefer)
+            ? prefer
+            : (langVoice[lang] || "ilaria");
+          if ([...voiceSel.options].some((o) => o.value === pick)) voiceSel.value = pick;
+        };
         const syncHint = () => {
-          const v = (voicesPayload.voices || []).find((x) => x.id === voiceSel.value);
+          const v = allVoices.find((x) => x.id === voiceSel.value);
           document.getElementById("voiceHint").textContent = v
             ? `${v.style} · motor: ${v.provider}${v.piper_ready ? " (modelo local OK)" : ""}`
             : "Elegí una voz para Ilaria.";
         };
-        voiceSel.onchange = syncHint;
+        fillVoices(langSel.value, chosen);
         syncHint();
+        langSel.onchange = () => {
+          fillVoices(langSel.value, langVoice[langSel.value]);
+          syncHint();
+        };
+        voiceSel.onchange = syncHint;
         (u.packs || u.enabled_packs || []).forEach((id) => selected.add(id));
         if (selected.size === 0) selected.add("diario");
         renderPacks(packsPayload.packs || []);

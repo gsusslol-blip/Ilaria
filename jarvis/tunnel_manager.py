@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -130,6 +131,127 @@ def current_public_url() -> str | None:
         return _public_url
 
 
+_STUCK_ENDPOINT = re.compile(r"endpoint '([^']+)'")
+
+
+def _ngrok_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "Ngrok-Version": "2"}
+
+
+def _release_tunnel_sessions(token: str) -> int:
+    """Stop leftover cloud agents so a free plan can open this PC's tunnel."""
+    if not token:
+        return 0
+    try:
+        import httpx
+    except ImportError:
+        return 0
+    headers = _ngrok_headers(token)
+    stopped = 0
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            response = client.get(
+                "https://api.ngrok.com/tunnel_sessions",
+                headers=headers,
+                params={"limit": "20"},
+            )
+            response.raise_for_status()
+            rows = response.json().get("tunnel_sessions") or []
+            print(f"[TUNNEL] Sesiones en la cuenta: {len(rows)}", flush=True)
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                session_id = str(item.get("id") or "").strip()
+                if not session_id:
+                    continue
+                gone = client.post(
+                    f"https://api.ngrok.com/tunnel_sessions/{session_id}/stop",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={},
+                )
+                print(f"[TUNNEL] Cierre de sesión {gone.status_code}", flush=True)
+                if gone.status_code in {200, 204, 404}:
+                    stopped += 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"[TUNNEL] No pude cerrar sesiones viejas ({exc}).", flush=True)
+        return stopped
+    if stopped:
+        print(f"[TUNNEL] Cerré {stopped} sesión(es) que habían quedado abiertas.", flush=True)
+    return stopped
+
+
+def _release_stuck_endpoint(token: str, message: str) -> bool:
+    """Stop a cloud endpoint left online after a previous Ilaria process died."""
+    match = _STUCK_ENDPOINT.search(message or "")
+    if not match or not token:
+        return False
+    wanted = match.group(1).rstrip("/")
+    try:
+        import httpx
+    except ImportError:
+        return False
+    headers = _ngrok_headers(token)
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            response = client.get(
+                "https://api.ngrok.com/endpoints",
+                headers=headers,
+                params={"limit": "50"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("endpoints") or payload.get("items") or []
+            released = False
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").rstrip("/")
+                if url != wanted:
+                    continue
+                endpoint_id = str(item.get("id") or "").strip()
+                if not endpoint_id:
+                    continue
+                gone = client.delete(
+                    f"https://api.ngrok.com/endpoints/{endpoint_id}",
+                    headers=headers,
+                )
+                if gone.status_code in {200, 204, 404}:
+                    released = True
+            return released
+    except Exception as exc:  # noqa: BLE001
+        print(f"[TUNNEL] No pude liberar el dominio ocupado ({exc}).")
+        return False
+
+
+def _open_tunnel(ngrok_mod: object, hud_port: int, token: str) -> object:
+    connect = getattr(ngrok_mod, "connect")
+    try:
+        return connect(hud_port, bind_tls=True)
+    except Exception as exc:
+        text = str(exc)
+        lower = text.lower()
+        session_limit = "108" in text or "simultaneous" in lower
+        endpoint_busy = "334" in text or "already online" in lower
+        if not session_limit and not endpoint_busy:
+            raise
+        api_key = os.getenv("NGROK_API_KEY", "").strip()
+        if session_limit and not api_key:
+            raise
+        print("[TUNNEL] El enlace anterior sigue tomado. Lo suelto y reintento.", flush=True)
+        if api_key:
+            _release_tunnel_sessions(api_key)
+            if endpoint_busy:
+                _release_stuck_endpoint(api_key, text)
+        kill = getattr(ngrok_mod, "kill", None)
+        if kill is not None:
+            try:
+                kill()
+            except Exception:
+                pass
+        time.sleep(3.0)
+        return connect(hud_port, bind_tls=True)
+
+
 def inicializar_tunel_remoto(
     settings: Settings | None = None,
     *,
@@ -140,14 +262,12 @@ def inicializar_tunel_remoto(
     cfg = settings or load_settings()
     token = os.getenv("NGROK_AUTHTOKEN", "").strip()
     if not token:
-        print("[TUNNEL] Sin NGROK_AUTHTOKEN. Sincronización limitada a LAN (UDP 8788).")
         return None
 
     hud_port = int(port if port is not None else cfg.hud_port)
     try:
         from pyngrok import ngrok
     except ImportError:
-        print("[TUNNEL] Falta pyngrok. Instalá: pip install pyngrok")
         return None
 
     with _lock:
@@ -157,8 +277,12 @@ def inicializar_tunel_remoto(
 
     try:
         ngrok.set_auth_token(token)
+        try:
+            ngrok.kill()
+        except Exception:
+            pass
         # Prefer HTTPS public URL for iOS ATS / Android cleartext policy.
-        tunnel = ngrok.connect(hud_port, bind_tls=True)
+        tunnel = _open_tunnel(ngrok, hud_port, token)
         public_url = str(getattr(tunnel, "public_url", "") or "").rstrip("/")
         if public_url.startswith("http://"):
             # Older pyngrok may still return http:// — upgrade scheme for clients.
@@ -175,14 +299,41 @@ def inicializar_tunel_remoto(
         print(f"[TUNNEL] Guardado en {sync_path(cfg)}")
         return public_url
     except Exception as exc:  # noqa: BLE001
-        print(f"[TUNNEL] Error al inicializar puente seguro: {exc}")
+        text = str(exc)
+        if "108" in text or "simultaneous" in text.lower():
+            _mark_wan_paused()
+            print("[TUNNEL] Sigo en la Wi-Fi de casa.", flush=True)
+        else:
+            print(f"[TUNNEL] Error al inicializar puente seguro: {exc}")
         with _lock:
             _started = False
         return None
 
 
+def wan_pause_file() -> Path:
+    from jarvis.config import DATA_DIR
+
+    return DATA_DIR / "wan_paused"
+
+
+def wan_paused() -> bool:
+    forced = os.getenv("ILARIA_WAN", "").strip().lower()
+    if forced in {"1", "true", "yes", "on"}:
+        return False
+    return wan_pause_file().is_file()
+
+
+def _mark_wan_paused() -> None:
+    path = wan_pause_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.is_file():
+        path.write_text("paused\n", encoding="utf-8")
+
+
 def start_tunnel_background(settings: Settings) -> None:
     """Non-blocking warm of the WAN tunnel after HUD bind."""
+    if wan_paused():
+        return
 
     def _run() -> None:
         inicializar_tunel_remoto(settings)

@@ -28,7 +28,6 @@ def start_vision(state: AppState | None = None) -> None:
     if _STARTED:
         return
     if not vision_enabled():
-        print("[+] Vision disabled (VISION_ENABLED=0).")
         return
     cameras = _cameras_from_env()
     if not cameras:

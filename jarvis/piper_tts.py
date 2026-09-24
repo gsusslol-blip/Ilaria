@@ -84,6 +84,8 @@ def piper_model(name: str | None = None) -> Path | None:
         found = _resolve_file(preferred)
         if found is not None:
             return found
+        # A named voice (Italian, English) must not fall through to Spanish.
+        return None
     env = (os.getenv("PIPER_MODEL") or "").strip()
     if env:
         found = _resolve_file(env)

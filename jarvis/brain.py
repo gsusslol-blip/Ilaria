@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 from jarvis.actions import Actions
@@ -119,6 +119,7 @@ class Brain:
         self.allowed_tools = allowed_tools
         self.actions = Actions(settings, self.bus, workspace, is_owner=is_owner)
         self._endpoint: LLMEndpoint | None = None
+        self._cloud_hold_until: float = 0.0
         self._history: dict[str, list[dict[str, Any]]] = defaultdict(list)
         self._chat_path = (self.memory.path.parent / "chat_history.json") if hasattr(self.memory, "path") else None
         self._load_persisted_history()
@@ -192,9 +193,14 @@ class Brain:
     def _chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         # Keep Ollama model + KV prompt cache warm (default unload is ~5 min).
         if self.endpoint.label in {"ollama", "llamacpp"}:
-            extra = dict(kwargs.pop("extra_body", None) or {})
-            extra.setdefault("keep_alive", os.getenv("OLLAMA_KEEP_ALIVE", "60m"))
-            kwargs["extra_body"] = extra
+            # keep_alive is Ollama-only. The bundled llama-server rejects it.
+            base = (self.settings.ollama_base_url or "")
+            if "11434" in base:
+                extra = dict(kwargs.pop("extra_body", None) or {})
+                extra.setdefault("keep_alive", os.getenv("OLLAMA_KEEP_ALIVE", "60m"))
+                if "qwen3" in (self.endpoint.model or "").lower():
+                    extra.setdefault("think", False)
+                kwargs["extra_body"] = extra
         if self.endpoint.label == "groq":
             last: BaseException | None = None
             for model in groq_model_candidates(self.settings):
@@ -332,6 +338,16 @@ class Brain:
 
     @property
     def endpoint(self) -> LLMEndpoint:
+        hold = self._cloud_hold_until
+        if (
+            hold
+            and time.time() >= hold
+            and self._endpoint is not None
+            and self._endpoint.label in {"ollama", "llamacpp"}
+        ):
+            # The cloud blip is over. Next turn tries the fast brain again.
+            self._endpoint = None
+            self._cloud_hold_until = 0.0
         if self._endpoint is None:
             self._endpoint = resolve_llm(self.settings)
         return self._endpoint
@@ -594,9 +610,23 @@ class Brain:
         self._persist_history(session_id)
 
         from jarvis.fast_path import try_fast_path
-        from jarvis.local import try_local_command
+        from jarvis.local import try_compound_commands, try_local_command
 
         surface = getattr(self.actions, "client_surface", "hud")
+        compound = try_compound_commands(
+            text,
+            self.execute,
+            self.memory,
+            self.settings,
+            self.allowed_tools,
+            surface=surface,
+        )
+        if compound:
+            answer = self._finish(compound)
+            self._store(session_id, answer)
+            yield answer
+            return
+
         fast = try_fast_path(
             text,
             self.execute,
@@ -639,6 +669,13 @@ class Brain:
                     return
 
         small = is_small_local_model(self.settings, self.endpoint.model)
+        if small and _live_fact_query(text) and not re.search(_OPINION_HINT, text, re.I):
+            spoken = _spoken_web_search(self.execute, text)
+            answer = self._finish(spoken or _OFFLINE_FACT_REPLY)
+            self._store(session_id, answer)
+            yield answer
+            return
+
         actionish = bool(re.search(_ACTION_HINT, text, re.I))
         manageish = bool(re.search(_MANAGE_HINT, text, re.I))
         opinionish = bool(re.search(_OPINION_HINT, text, re.I))
@@ -935,6 +972,7 @@ class Brain:
                 messages.append(assistant_msg)
                 history.append(assistant_msg)
 
+                spoken_now: list[str] = []
                 for call, result in _execute_tools_parallel(self.execute, tool_calls):
                     executed_actions.append((call.function.name, result))
                     content = result[:12000]
@@ -942,6 +980,8 @@ class Brain:
                         from jarvis.search_speak import clean_search_results, speakable_from_search
 
                         spoken = speakable_from_search(result, text, max_words=42)
+                        if spoken:
+                            spoken_now.append(spoken)
                         cleaned = clean_search_results(result, max_chars=900)
                         if spoken:
                             content = (
@@ -957,6 +997,13 @@ class Brain:
                     }
                     messages.append(tool_msg)
                     history.append(tool_msg)
+
+                # A clean fact snippet is the answer. Skip the second model pass.
+                if factish and spoken_now and not manageish and not schoolish:
+                    answer = self._finish(" ".join(spoken_now))
+                    yield answer
+                    self._store(session_id, answer)
+                    return
 
                 # Stop forcing more tools after the first successful round.
                 choice_mode = "auto"
@@ -1049,9 +1096,11 @@ class Brain:
                 try:
                     from jarvis.config import _ollama_reachable
                     from jarvis.llm import _ollama_endpoint
+                    from jarvis.ollama_warmer import choose_local_model
 
                     if _ollama_reachable(self.settings.ollama_base_url):
-                        self._endpoint = _ollama_endpoint(self.settings)
+                        local_name = choose_local_model(self.settings)
+                        self._endpoint = _ollama_endpoint(self.settings, model=local_name or None)
                         # Fall through to a single local synthesis without tools.
                         response = self._chat(
                             [
@@ -1069,6 +1118,7 @@ class Brain:
                         )
                         raw = (response.choices[0].message.content or "").strip()
                         if raw:
+                            self._cloud_hold_until = time.time() + 90.0
                             answer = self._finish(raw)
                             self._store(session_id, answer)
                             yield answer
@@ -1094,6 +1144,41 @@ class Brain:
                 answer = f"{answer}\n{hint}"
             self._store(session_id, answer)
             yield answer
+
+
+_LIVE_FACT_RE = re.compile(
+    r"\b(presidente|precio|cotiz|d[oó]lar|euro|eur|bitcoin|btc|gan[oó]|noticia|"
+    r"últim[oa]|ultimo|mundial)\b",
+    re.I,
+)
+_OFFLINE_FACT_REPLY = (
+    "No puedo verificar ese dato ahora. El modelo local no tiene esa fuente "
+    "y no llegué a internet."
+)
+
+
+def _live_fact_query(text: str) -> bool:
+    return bool(_LIVE_FACT_RE.search(text or ""))
+
+
+def _spoken_web_search(execute: Callable[[str, str], str], text: str) -> str:
+    """One live search. Empty string when the network or the snippet fails."""
+    try:
+        hit = execute(
+            "web_search",
+            json.dumps({"query": (text or "")[:180], "max_results": 5}, ensure_ascii=False),
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    from jarvis.search_cache import _is_failed_answer
+    from jarvis.search_speak import speakable_from_search
+
+    if not hit or _is_failed_answer(hit):
+        return ""
+    spoken = speakable_from_search(hit, text, max_words=40)
+    if not spoken or _is_failed_answer(spoken):
+        return ""
+    return spoken
 
 
 def _looks_like_question(text: str) -> bool:

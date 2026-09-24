@@ -110,6 +110,6 @@ Al arrancar, si hay release nueva, aplica ZIP liviano de `jarvis/` (backup en `d
 ## Dueño local / portable
 
 - `.local-owner.bat` (no se publica) fija dueño en *tu* copia.
-- `build.bat` → `dist\JARVIS` (WebView2). No copies `.env` con secrets.
+- `build.bat` → `dist\Ilaria` (WebView2). No copies `.env` con secrets.
 
 No es consejo médico ni financiero.

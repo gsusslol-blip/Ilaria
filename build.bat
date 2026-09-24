@@ -17,9 +17,9 @@ ping -n 3 127.0.0.1 >nul
 :: 2. Limpieza de caches PyInstaller / binario viejo
 echo [+] Limpiando caches de build...
 if exist "build" rmdir /s /q "build" 2>nul
-if exist "dist\JARVIS\Ilaria.exe" (
+if exist "dist\Ilaria\Ilaria.exe" (
   echo [!] Eliminando Ilaria.exe previo para evitar bloqueo de sobrescritura...
-  del /q /f "dist\JARVIS\Ilaria.exe" >nul 2>&1
+  del /q /f "dist\Ilaria\Ilaria.exe" >nul 2>&1
 )
 
 :: 3. Empaquetado con jarvis.spec (siempre desde .venv)
@@ -40,10 +40,10 @@ if errorlevel 1 (
 
 :: 4. Persistencia local junto al exe
 echo [+] Inyectando data/ y .env junto al binario...
-if not exist "dist\JARVIS\data" mkdir "dist\JARVIS\data"
-if exist .env copy /Y .env dist\JARVIS\.env >nul
-if exist .env.example copy /Y .env.example dist\JARVIS\.env.example >nul
-if exist data xcopy /E /I /Y data dist\JARVIS\data >nul
+if not exist "dist\Ilaria\data" mkdir "dist\Ilaria\data"
+if exist .env copy /Y .env dist\Ilaria\.env >nul
+if exist .env.example copy /Y .env.example dist\Ilaria\.env.example >nul
+if exist data xcopy /E /I /Y data dist\Ilaria\data >nul
 (
   echo Ilaria v1.3.4
   echo.
@@ -52,10 +52,10 @@ if exist data xcopy /E /I /Y data dist\JARVIS\data >nul
   echo Firewall: ejecuta firewall-ilaria.bat como Administrador una vez.
   echo Datos y .env quedan junto al exe ^(no los subas a internet^).
   echo Si no abre: WebView2 Runtime de Microsoft Edge.
-) > dist\JARVIS\LEEME.txt
+) > dist\Ilaria\LEEME.txt
 
 echo ==========================================================
-echo [+] Listo: dist\JARVIS\Ilaria.exe
+echo [+] Listo: dist\Ilaria\Ilaria.exe
 echo [!] Dev rapido: run.bat  ^|  Health: http://localhost:8787/health
 echo ==========================================================
 pause

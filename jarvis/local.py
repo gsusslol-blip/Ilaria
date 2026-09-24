@@ -8,8 +8,8 @@ from typing import Callable
 
 from jarvis.config import Settings
 from jarvis.memory import Memory
+from jarvis.policy_replies import fixed_policy_reply
 from jarvis.subjective import APPRECIATION_REPLY as _APPRECIATION_REPLY
-from jarvis.subjective import fixed_subjective_reply
 
 Execute = Callable[[str, str], str]
 
@@ -24,7 +24,16 @@ def try_local_command(
 ) -> str | None:
     """Run deterministic tools. None = leave it to the LLM."""
     raw = text.strip()
+    raw = re.sub(
+        r"^(?:hola|hey|buenas(?:\s+(?:d[ií]as|tardes|noches))?|buenos\s+d[ií]as)[\s,.:\-]*",
+        "",
+        raw,
+        flags=re.I,
+    ).strip()
     raw = re.sub(r"^(?:hey\s+)?ilaria\b[\s,.:\-]*", "", raw, flags=re.I).strip()
+    if not raw:
+        who = (settings.user_name or "").strip()
+        return f"Hola{', ' + who if who else ''}. Acá estoy."
     lower = raw.lower()
     city = _city(raw, memory)
     phone = (surface or "hud").strip().lower() in {"android", "ios", "iphone", "ipad"}
@@ -41,7 +50,7 @@ def try_local_command(
     if re.search(r"\b(deshac[eé]r?|undo|arrepent)\b", lower):
         return run("undo_last")
 
-    subjective = fixed_subjective_reply(raw)
+    subjective = fixed_policy_reply(raw)
     if subjective:
         return subjective
 
@@ -386,6 +395,13 @@ def try_local_command(
         action = "off" if re.search(r"\bapag", lower) else "on"
         return run("control_device", entity_id=entity, action=action)
 
+    from jarvis.ha_scenes import parse_ha_routine
+
+    ha_routine = parse_ha_routine(raw)
+    if ha_routine:
+        kind, name = ha_routine
+        return run("run_ha_routine", kind=kind, name=name)
+
     if re.search(
         r"\b(apag[aá]|shutdown)\b.{0,24}\b(pc|computadora|equipo|windows|sistema)\b|"
         r"\b(apaga(?:r)?\s+la\s+(?:pc|computadora|equipo))\b",
@@ -591,6 +607,58 @@ def try_local_command(
     if looks_like_shop_compare(raw):
         return run("shop_compare", query=raw)
 
+    from jarvis.code_assist import looks_like_code_help
+
+    if looks_like_code_help(raw):
+        return run("code_assist", query=raw)
+
+    from jarvis.calendar_local import parse_calendar_request, parse_when
+
+    cal = parse_calendar_request(raw, timezone=settings.timezone)
+    if cal:
+        action, params = cal
+        return run(
+            "calendar_event",
+            action=action,
+            title=str(params.get("title") or ""),
+            when_iso=str(params.get("when_iso") or ""),
+            offset_days=int(params.get("offset_days") or 0),
+        )
+
+    # Natural reminder: "recordame mañana a las 15 la reunión"
+    rem = re.match(
+        r"^(?:record[aá]me|acordame|avisame|avis[aá]me)\s+(.+)$",
+        raw,
+        re.I | re.S,
+    )
+    if rem:
+        blob = rem.group(1).strip()
+        when = parse_when(blob, timezone=settings.timezone)
+        if when is not None:
+            label = re.sub(
+                r"^(?:hoy|ma[nñ]ana|pasado\s+ma[nñ]ana)\s*(?:a\s+las?\s+\d{1,2}(?::\d{2})?\s*)?",
+                "",
+                blob,
+                flags=re.I,
+            ).strip(" .,")
+            label = re.sub(r"\b(?:a\s+las?\s+\d{1,2}(?::\d{2})?)\b", "", label, flags=re.I).strip(" .,")
+            return run(
+                "set_reminder",
+                when_iso=when.isoformat(timespec="seconds"),
+                text=label or "Recordatorio",
+            )
+
+    from jarvis.email_parse import parse_email_request
+
+    mail = parse_email_request(raw)
+    if mail:
+        return run(
+            "draft_or_send_email",
+            to=mail["to"],
+            subject=mail["subject"],
+            body=mail["body"],
+        )
+
     # Weather — skip science / material questions ("temperatura ambiente", ebullición).
     if re.search(r"\b(clima|tiempo|llueve|pronostico|pronóstico)\b", lower) or (
         re.search(r"\btemperatura\b", lower)
@@ -648,8 +716,21 @@ def try_local_command(
         return run("recall")
 
     wiki = re.match(r"^(?:qu[eé]\s+es|qui[eé]n\s+es|wikipedia)\s+(.+)$", raw, re.I)
-    if wiki:
-        return run("wikipedia", topic=wiki.group(1).strip())
+    office = re.match(
+        r"^(?:el\s+|la\s+)?presidente\s+de\s+(.+)$",
+        raw.strip(" .?¿!"),
+        re.I,
+    )
+    if wiki or office:
+        topic = (wiki or office).group(1).strip(" .?¿!")
+        if office and not re.search(r"\bpresidente\b", topic, re.I):
+            topic = f"presidente de {topic}"
+        answer = run("wikipedia", topic=topic)
+        if answer and not _lookup_failed(answer) and _names_current_office(answer):
+            return answer
+        if answer and not _lookup_failed(answer) and not re.search(r"\bpresidente\b", topic, re.I):
+            return answer
+        return _spoken_search(run, f"{topic} actual", raw)
 
     maps = re.match(
         r"^(?:c[oó]mo\s+llego(?:\s+a)?|mapas?|ruta(?:\s+a)?|llevame\s+a|ll[eé]vame\s+a|"
@@ -705,14 +786,17 @@ def try_local_command(
             return hit
 
     if re.search(r"\b(d[oó]lar(?:es)?|blue|cripto|bitcoin|btc|euro|eur|mep|ccl)\b", lower):
+        from jarvis.live_facts import live_market_quote
+
+        quoted = live_market_quote(raw)
+        if quoted:
+            return quoted
         hit = run("web_search", query=raw, max_results=5)
         from jarvis.search_speak import speakable_from_search
 
         spoken = speakable_from_search(hit or "", raw, max_words=45)
         if spoken:
             return spoken
-        if hit and not str(hit).startswith("No results") and "error" not in str(hit).lower()[:40]:
-            return str(hit)[:900]
         return "No pude cotizar en este momento. Probá de nuevo en un toque."
 
     img = re.match(
@@ -764,9 +848,17 @@ def try_local_command(
         if lower.startswith("google"):
             if android:
                 return run("phone_hands", action="search", target=query)
-            # Prefer web_search (Bing + semantic cache) over opening a browser tab.
-            return run("web_search", query=query, max_results=5)
-        return run("web_search", query=query, max_results=5)
+            # Spoken answer, never the raw hit list.
+            return _spoken_search(run, query, raw)
+        if lower.startswith("noticias"):
+            topic = re.sub(r"^(?:de|del|la|las|los)\s+", "", query, flags=re.I).strip()
+            from jarvis.live_facts import live_headlines
+
+            headlines = live_headlines(topic)
+            if headlines:
+                return headlines
+            return _spoken_search(run, f"noticias {topic}".strip(), raw)
+        return _spoken_search(run, query, raw)
 
     if len(raw) >= 12 and re.search(
         r"\b(noticia|precio|quien gan[oó]|resultado|cuando sale|cuándo|"
@@ -774,9 +866,56 @@ def try_local_command(
         r"definici[oó]n|significa)\b",
         lower,
     ):
-        return run("web_search", query=_strip_question_shell(raw), max_results=5)
+        return _spoken_search(run, _strip_question_shell(raw), raw)
 
     return None
+
+
+_COMPOUND_SPLIT = re.compile(r"\s*(?:;|\by\b)\s*", re.I)
+
+
+def split_compound_phrase(text: str) -> list[str]:
+    """Split 'clima y qué hora es'. Leave comparisons and FX phrases whole."""
+    raw = " ".join((text or "").split()).strip()
+    if not raw:
+        return []
+    if re.search(r"\b(m[aá]s|versus|\bvs\b|\bo\b)\b", raw, re.I):
+        return []
+    if re.search(r"\b(d[oó]lar|euro|eur|bitcoin|btc|blue|mep|ccl)\b", raw, re.I):
+        return []
+    parts = [part.strip(" .,;") for part in _COMPOUND_SPLIT.split(raw) if part.strip(" .,;")]
+    if len(parts) < 2 or len(parts) > 4:
+        return []
+    if any(len(part) < 4 for part in parts):
+        return []
+    return parts
+
+
+def try_compound_commands(
+    text: str,
+    execute: Execute,
+    memory: Memory,
+    settings: Settings,
+    allowed: set[str] | None = None,
+    surface: str = "hud",
+) -> str | None:
+    """Run each piece of a chained phrase. None if any piece is not a shortcut."""
+    parts = split_compound_phrase(text)
+    if not parts:
+        return None
+    from jarvis.fast_path import try_fast_path
+
+    done: list[str] = []
+    for part in parts:
+        hit = try_fast_path(part, execute, surface=surface, allowed=allowed)
+        if hit is None:
+            hit = try_local_command(part, execute, memory, settings, allowed, surface=surface)
+        if not hit:
+            return None
+        done.append(hit.strip())
+    if len(done) < 2:
+        return None
+    return " ".join(piece for piece in done if piece)
 
 
 def local_reply(
@@ -1017,6 +1156,49 @@ def _strip_question_shell(text: str) -> str:
         flags=re.I,
     )
     return " ".join(t.split()).strip(" .")
+
+
+def _lookup_failed(text: str) -> bool:
+    from jarvis.search_cache import _is_failed_answer
+
+    return _is_failed_answer(text)
+
+
+def _names_current_office(text: str) -> bool:
+    """True when the line says who holds the job, not only what the job is."""
+    return bool(
+        re.search(
+            r"\b(actual(?:mente)?|ejerce como|en el cargo|tom[oó] posesi[oó]n)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def _with_current_year(query: str) -> str:
+    from datetime import datetime
+
+    year = str(datetime.now().year)
+    if year in (query or ""):
+        return query
+    if re.search(
+        r"\b(últim[oa]|ultim[oa]|actual|hoy|ahora|gan[oó]|noticia|presidente)\b",
+        query or "",
+        re.I,
+    ):
+        return f"{query} {year}".strip()
+    return query
+
+
+def _spoken_search(run: Callable[..., str], query: str, raw: str) -> str:
+    from jarvis.search_speak import speakable_from_search
+
+    query = _with_current_year(query)
+    hit = run("web_search", query=query, max_results=5)
+    spoken = speakable_from_search(hit or "", query, max_words=45)
+    if spoken and not _lookup_failed(spoken):
+        return spoken
+    return "No pude buscar eso ahora. Probá de nuevo en un toque."
 
 
 _CAPITALS: dict[str, str] = {

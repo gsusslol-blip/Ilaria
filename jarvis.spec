@@ -86,8 +86,23 @@ _piper_dir = _PackPath("bin/piper")
 if (_piper_dir / "piper.exe").is_file() or (_piper_dir / "piper").is_file():
     datas.append((str(_piper_dir), "bin/piper"))
 _tts_dir = _PackPath("data/tts")
-if _tts_dir.is_dir() and any(_tts_dir.glob("*.onnx")):
-    datas.append((str(_tts_dir), "data/tts"))
+_voice_names = (
+    "es_AR-daniela-high.onnx",
+    "es_MX-ald-medium.onnx",
+    "it_IT-paola-medium.onnx",
+    "it_IT-riccardo-x_low.onnx",
+    "en_US-lessac-medium.onnx",
+)
+if _tts_dir.is_dir():
+    _voice_out = _PackPath("build/tts-pack")
+    _voice_out.mkdir(parents=True, exist_ok=True)
+    for _voice in _voice_names:
+        for _suffix in ("", ".json"):
+            _src = _tts_dir / (_voice + _suffix)
+            if _src.is_file():
+                (_voice_out / _src.name).write_bytes(_src.read_bytes())
+    if any(_voice_out.glob("*.onnx")):
+        datas.append((str(_voice_out), "data/tts"))
 
 a = Analysis(
     ["main.py"],
@@ -126,5 +141,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="JARVIS",
+    name="Ilaria",
 )

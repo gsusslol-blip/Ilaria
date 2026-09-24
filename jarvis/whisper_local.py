@@ -103,6 +103,15 @@ def transcribe_local(settings: Settings, data: bytes, filename: str) -> str:
             forced = None
         elif not forced:
             forced = "es"
+        # Per-user voice language wins over the PC-wide STT pref (Sara = italiano).
+        try:
+            from jarvis.voices import get_voice
+
+            voice_lang = get_voice(getattr(settings, "voice_id", "") or "").lang
+            if voice_lang in {"es", "it", "en", "pt", "fr", "de"}:
+                forced = voice_lang
+        except Exception:
+            pass
         prompts = {
             "es": "Ilaria, español rioplatense, comandos cortos.",
             "en": "Ilaria assistant, short English voice commands.",

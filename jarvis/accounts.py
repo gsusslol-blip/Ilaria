@@ -136,6 +136,7 @@ class AccountStore:
         groq_key: str = "",
         role: str | None = None,
         force: bool = False,
+        tts_voice: str = "",
     ) -> User:
         user_key = username.strip().lower()
         if not USERNAME_RE.match(user_key):
@@ -185,6 +186,14 @@ class AccountStore:
                 raise ValueError("Ese usuario ya existe.") from exc
         user = self.get_by_id(user_id)
         self.issue_recovery_code(user.username)
+        if tts_voice.strip():
+            from jarvis.voices import normalize_voice_id
+
+            voice = normalize_voice_id(tts_voice)
+            with self._lock, self._connect() as db:
+                db.execute("UPDATE users SET tts_voice=? WHERE id=?", (voice, user_id))
+                db.commit()
+            user = self.get_by_id(user_id)
         return user
 
     def login(self, username: str, password: str) -> User:

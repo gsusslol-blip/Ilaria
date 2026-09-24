@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
+import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -34,7 +36,15 @@ if __name__ == "__main__":
         try:
             from jarvis.pc_updater import maybe_update_on_boot
 
-            maybe_update_on_boot()
+            updated = maybe_update_on_boot()
+            if updated.status == "updated":
+                if "requirements.txt" in updated.written:
+                    subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"],
+                        check=False,
+                    )
+                os.environ["ILARIA_JUST_UPDATED"] = "1"
+                os.execv(sys.executable, [sys.executable, *sys.argv])
         except Exception as upd_exc:  # noqa: BLE001 — never block boot
             print(f"[updater] ignored: {upd_exc}")
         from jarvis.runtime import main
